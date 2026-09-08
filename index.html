@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Stunt Baron</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#1c1f26">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root{
+    --panel:#1c1f26;
+    --accent:#e0522a;
+    --text:#f2f2f0;
+    --text-dim:#a9adb8;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:#0b0d12;
+    color:var(--text);
+    user-select:none;-webkit-user-select:none;
+    touch-action:none;
+  }
+  #wrap{position:relative;width:100vw;height:100vh;display:flex;flex-direction:column;}
+  #hud{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:10px 14px;background:var(--panel);
+    border-bottom:1px solid #333844;z-index:5;flex-shrink:0;
+  }
+  #hud .title{font-size:15px;font-weight:600;letter-spacing:.5px;}
+  #hud .stats{display:flex;gap:16px;font-size:13px;color:var(--text-dim);}
+  #hud .stats b{color:var(--text);font-weight:600;}
+  #stage{position:relative;flex:1;overflow:hidden;}
+  canvas{display:block;width:100%;height:100%;}
+  #hint{
+    position:absolute;top:10px;left:0;right:0;text-align:center;
+    font-size:12px;color:var(--text-dim);pointer-events:none;z-index:4;
+    text-shadow:0 1px 2px rgba(0,0,0,0.4);
+  }
+  #overlay{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:10px;background:rgba(10,12,16,0.78);z-index:10;text-align:center;padding:24px;
+  }
+  #overlay.hidden{display:none;}
+  #overlay h2{margin:0;font-size:20px;}
+  #overlay p{margin:0;font-size:13px;color:var(--text-dim);max-width:280px;}
+  #overlay button{
+    margin-top:6px;padding:10px 22px;border-radius:8px;border:none;
+    background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
+  }
+  #controls{
+    position:absolute;bottom:0;left:0;right:0;
+    display:flex;justify-content:space-between;align-items:flex-end;
+    padding:16px;z-index:6;pointer-events:none;
+  }
+  #controls .grp{display:flex;gap:10px;pointer-events:auto;}
+  .btn{
+    width:56px;height:56px;border-radius:50%;border:1px solid #3a4051;
+    background:rgba(28,31,38,0.85);color:var(--text);font-size:22px;
+    display:flex;align-items:center;justify-content:center;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .btn.active{background:var(--accent);border-color:var(--accent);}
+  .btn.gas{width:72px;height:72px;font-size:24px;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div class="title">Stunt Baron</div>
+    <div class="stats">
+      <div>Distance <b id="distStat">0 m</b></div>
+      <div>Best <b id="bestStat">0 m</b></div>
+      <div>Air <b id="airStat">0</b></div>
+    </div>
+  </div>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="hint">Hold GAS to ride, use the flip buttons mid-air to land safe. Catch air for bonus glow!</div>
+    <div id="controls">
+      <div class="grp">
+        <div class="btn" id="leanL" aria-label="lean back">&#8634;</div>
+        <div class="btn" id="leanR" aria-label="lean forward">&#8635;</div>
+      </div>
+      <div class="grp">
+        <div class="btn gas" id="brake" aria-label="brake">&#9664;</div>
+        <div class="btn gas" id="gas" aria-label="gas">&#9654;</div>
+      </div>
+    </div>
+    <div id="overlay">
+      <h2 id="overlayTitle">Stunt Baron</h2>
+      <p id="overlaySub">Ride the hills, catch air off the ramp, don't faceplant. Hold GAS to go, tap the flip buttons mid-air to level out before you land.</p>
+      <button id="startBtn">Start riding</button>
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script>
+(function(){
+  var Engine=Matter.Engine, World=Matter.World, Bodies=Matter.Bodies, Body=Matter.Body,
+      Constraint=Matter.Constraint, Events=Matter.Events, Runner=Matter.Runner;
+
+  var canvas=document.getElementById('c'), ctx=canvas.getContext('2d'), stage=document.getElementById('stage');
+  var distStat=document.getElementById('distStat'), bestStat=document.getElementById('bestStat'), airStat=document.getElementById('airStat');
+  var overlay=document.getElementById('overlay'), overlayTitle=document.getElementById('overlayTitle'), overlaySub=document.getElementById('overlaySub');
+  var startBtn=document.getElementById('startBtn');
+
+  var W,H,DPR;
+  function resize(){
+    DPR=Math.min(window.devicePixelRatio||1,2);
+    W=stage.clientWidth; H=stage.clientHeight;
+    canvas.width=W*DPR; canvas.height=H*DPR;
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize',resize);
+  resize();
+
+  var engine=Engine.create();
+  var world=engine.world;
+
+  var trackRuns=[], groundBodies=[], finishX=0;
+  var JUMP_START=2200, JUMP_END=2420, LAND_END=2720;
+
+  function genTrack(){
+    var step=34, baseY=420, x=-200, points=[];
+    while(x<6200){
+      var y=baseY+Math.sin(x/260)*55+Math.sin(x/95)*18;
+      if(x>JUMP_START-260 && x<=JUMP_START){
+        var t=(x-(JUMP_START-260))/260; y-=t*t*170;
+      } else if(x>JUMP_END && x<LAND_END){
+        var t2=(x-JUMP_END)/(LAND_END-JUMP_END); y=(baseY-170)*(1-t2)+baseY*t2+Math.sin(x/260)*20;
+      }
+      points.push({x:x,y:y});
+      x+=step;
+    }
+    finishX=points[points.length-1].x-300;
+
+    var run=[];
+    for(var i=0;i<points.length;i++){
+      var p=points[i];
+      if(p.x>JUMP_START && p.x<JUMP_END){
+        if(run.length>1) trackRuns.push(run);
+        run=[];
+        continue;
+      }
+      run.push(p);
+    }
+    if(run.length>1) trackRuns.push(run);
+
+    for(var r=0;r<trackRuns.length;r++){
+      var pts=trackRuns[r];
+      for(var j=0;j<pts.length-1;j++){
+        var a=pts[j], b=pts[j+1];
+        var dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy), angle=Math.atan2(dy,dx);
+        var seg=Bodies.rectangle((a.x+b.x)/2,(a.y+b.y)/2,len+2,26,{isStatic:true,angle:angle,friction:1,label:'ground'});
+        groundBodies.push(seg);
+      }
+    }
+    World.add(world,groundBodies);
+  }
+  genTrack();
+
+  function groundYAt(x){
+    for(var r=0;r<trackRuns.length;r++){
+      var pts=trackRuns[r];
+      for(var i=0;i<pts.length-1;i++){
+        if(pts[i].x<=x && pts[i+1].x>=x){
+          var t=(x-pts[i].x)/((pts[i+1].x-pts[i].x)||1);
+          return pts[i].y+t*(pts[i+1].y-pts[i].y);
+        }
+      }
+    }
+    return 500;
+  }
+
+  var bike;
+  function makeBike(x,y){
+    var group=Body.nextGroup(true);
+    var chassis=Bodies.rectangle(x,y,78,22,{collisionFilter:{group:group},density:0.0018,friction:0.3,chamfer:{radius:8},label:'chassis'});
+    var wA=Bodies.circle(x-30,y+14,17,{collisionFilter:{group:group},friction:1,frictionStatic:2,density:0.02,label:'wheel'});
+    var wB=Bodies.circle(x+30,y+14,17,{collisionFilter:{group:group},friction:1,frictionStatic:2,density:0.02,label:'wheel'});
+    var axA=Constraint.create({bodyA:chassis,pointA:{x:-30,y:14},bodyB:wA,stiffness:0.9,length:0,damping:0.15});
+    var axB=Constraint.create({bodyA:chassis,pointA:{x:30,y:14},bodyB:wB,stiffness:0.9,length:0,damping:0.15});
+    World.add(world,[chassis,wA,wB,axA,axB]);
+    return {chassis:chassis,wA:wA,wB:wB,axA:axA,axB:axB};
+  }
+
+  var crashed=false, finished=false, maxDist=0, best=0, airCount=0;
+
+  var trailA=[], trailB=[];
+  var groundContact={wA:false,wB:false};
+  var airborne=false, airStartT=0;
+  var shake=0;
+  var auras=[]; // {x,y,r,life,maxLife}
+  var popups=[]; // {x,y,text,life,maxLife,color}
+
+  function resetBike(){
+    if(bike) World.remove(world,[bike.chassis,bike.wA,bike.wB,bike.axA,bike.axB]);
+    bike=makeBike(0,groundYAt(0)-40);
+    crashed=false; finished=false; maxDist=0; airCount=0;
+    distStat.textContent='0 m'; airStat.textContent='0';
+    trailA=[]; trailB=[]; auras=[]; popups=[]; shake=0;
+    groundContact.wA=false; groundContact.wB=false; airborne=false;
+  }
+
+  function spawnPopup(x,y,text,color){
+    popups.push({x:x,y:y,text:text,life:0,maxLife:900,color:color||'#e0c064'});
+  }
+  function spawnAura(x,y){
+    auras.push({x:x,y:y,r:6,life:0,maxLife:550});
+  }
+
+  Events.on(engine,'collisionStart',function(e){
+    for(var k=0;k<e.pairs.length;k++){
+      var pair=e.pairs[k];
+      var labels=[pair.bodyA.label,pair.bodyB.label];
+      if(labels.indexOf('chassis')>-1 && labels.indexOf('ground')>-1 && !crashed && !finished){
+        crash();
+      }
+      if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
+        var wheelBody=pair.bodyA.label==='wheel'?pair.bodyA:pair.bodyB;
+        if(bike && wheelBody===bike.wA) groundContact.wA=true;
+        if(bike && wheelBody===bike.wB) groundContact.wB=true;
+      }
+    }
+  });
+  Events.on(engine,'collisionEnd',function(e){
+    for(var k=0;k<e.pairs.length;k++){
+      var pair=e.pairs[k];
+      var labels=[pair.bodyA.label,pair.bodyB.label];
+      if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
+        var wheelBody=pair.bodyA.label==='wheel'?pair.bodyA:pair.bodyB;
+        if(bike && wheelBody===bike.wA) groundContact.wA=false;
+        if(bike && wheelBody===bike.wB) groundContact.wB=false;
+      }
+    }
+  });
+
+  function crash(){
+    crashed=true;
+    shake=18;
+    overlayTitle.textContent='Crashed!';
+    overlaySub.textContent='Distance: '+Math.floor(maxDist)+' m. Tap to try again.';
+    startBtn.textContent='Try again';
+    overlay.classList.remove('hidden');
+  }
+  function win(){
+    finished=true;
+    overlayTitle.textContent='Finish line!';
+    overlaySub.textContent='You made it \u2014 '+Math.floor(maxDist)+' m. Ride again?';
+    startBtn.textContent='Ride again';
+    overlay.classList.remove('hidden');
+  }
+
+  var input={gas:false,brake:false,leanL:false,leanR:false};
+  function bindBtn(id,key){
+    var el=document.getElementById(id);
+    var on=function(ev){ev.preventDefault();input[key]=true;el.classList.add('active');};
+    var off=function(ev){ev.preventDefault();input[key]=false;el.classList.remove('active');};
+    el.addEventListener('pointerdown',on);
+    el.addEventListener('pointerup',off);
+    el.addEventListener('pointerleave',off);
+    el.addEventListener('pointercancel',off);
+  }
+  bindBtn('gas','gas'); bindBtn('brake','brake'); bindBtn('leanL','leanL'); bindBtn('leanR','leanR');
+
+  window.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key==='d') input.gas=true;
+    if(e.key==='ArrowLeft'||e.key==='a') input.brake=true;
+    if(e.key==='ArrowUp'||e.key==='w') input.leanL=true;
+    if(e.key==='ArrowDown'||e.key==='s') input.leanR=true;
+  });
+  window.addEventListener('keyup',function(e){
+    if(e.key==='ArrowRight'||e.key==='d') input.gas=false;
+    if(e.key==='ArrowLeft'||e.key==='a') input.brake=false;
+    if(e.key==='ArrowUp'||e.key==='w') input.leanL=false;
+    if(e.key==='ArrowDown'||e.key==='s') input.leanR=false;
+  });
+
+  startBtn.addEventListener('click',function(){
+    overlay.classList.add('hidden');
+    resetBike();
+  });
+
+  var runner=Runner.create();
+  Runner.run(runner,engine);
+
+  var faceImg=new Image();
+  var faceImgReady=false;
+  faceImg.onload=function(){faceImgReady=true;};
+  faceImg.src='rider-face.png';
+
+  var MAX_SPIN=1.1;
+  function applyControls(){
+    if(crashed||finished||!bike) return;
+    if(input.gas){
+      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+0.07,MAX_SPIN));
+      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+0.07,MAX_SPIN));
+    }
+    if(input.brake){
+      Body.setAngularVelocity(bike.wA,Math.max(bike.wA.angularVelocity-0.1,-MAX_SPIN*0.6));
+      Body.setAngularVelocity(bike.wB,Math.max(bike.wB.angularVelocity-0.1,-MAX_SPIN*0.6));
+    }
+    if(input.leanL) Body.setAngularVelocity(bike.chassis,bike.chassis.angularVelocity-0.045);
+    if(input.leanR) Body.setAngularVelocity(bike.chassis,bike.chassis.angularVelocity+0.045);
+  }
+
+  function drawRider(cx,cy,angle,speed){
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(angle);
+    var flow=Math.min(speed*0.6,14);
+
+    // cape, streaming back with speed
+    ctx.fillStyle='rgba(18,20,26,0.88)';
+    ctx.beginPath();
+    ctx.moveTo(0,-11);
+    ctx.quadraticCurveTo(-18-flow,-4,-34-flow*1.6,8);
+    ctx.quadraticCurveTo(-30-flow,-16,-10,-19);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(224,82,42,0.35)';
+    ctx.beginPath();
+    ctx.moveTo(-2,-13);
+    ctx.quadraticCurveTo(-16-flow,-8,-28-flow*1.4,2);
+    ctx.quadraticCurveTo(-22-flow,-15,-8,-17);
+    ctx.closePath(); ctx.fill();
+
+    // torso + arm
+    ctx.strokeStyle='#1c1f26'; ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(-4,-8); ctx.lineTo(2,-28); ctx.lineTo(14,-20); ctx.stroke();
+
+    // gold shoulder plate
+    ctx.fillStyle='#e0c064';
+    ctx.beginPath(); ctx.ellipse(2,-27,6.5,3.2,0.3,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#8a6a2a'; ctx.lineWidth=1; ctx.stroke();
+
+    // long hair streaming back
+    ctx.strokeStyle='#20232b'; ctx.lineWidth=3; ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(3,-35); ctx.quadraticCurveTo(-8-flow*0.5,-30,-20-flow,-20);
+    ctx.moveTo(4,-36); ctx.quadraticCurveTo(-10-flow*0.6,-26,-26-flow*1.2,-10);
+    ctx.moveTo(5,-35); ctx.quadraticCurveTo(-6-flow*0.4,-34,-16-flow*0.8,-28);
+    ctx.stroke();
+
+    // head — drawn from rider-face.png so it can be swapped out manually
+    var headR=8.6;
+    if(faceImgReady){
+      ctx.save();
+      ctx.beginPath(); ctx.arc(4,-34,headR,0,Math.PI*2); ctx.clip();
+      ctx.drawImage(faceImg,4-headR,-34-headR,headR*2,headR*2);
+      ctx.restore();
+    } else {
+      ctx.fillStyle='#e0522a'; ctx.beginPath(); ctx.arc(4,-34,headR,0,Math.PI*2); ctx.fill();
+    }
+    ctx.strokeStyle='#e0c064'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(4,-34,headR+0.6,-2.5,-0.6); ctx.stroke();
+
+    ctx.restore();
+  }
+
+  var lastT=performance.now();
+  function frame(now){
+    requestAnimationFrame(frame);
+    var dt=Math.min(now-lastT,50); lastT=now;
+    applyControls();
+    if(bike && !crashed && !finished){
+      var d=bike.chassis.position.x/12;
+      if(d>maxDist){maxDist=d; distStat.textContent=Math.floor(maxDist)+' m';}
+      if(maxDist>best){best=maxDist; bestStat.textContent=Math.floor(best)+' m';}
+      if(bike.chassis.position.y>1400) crash();
+      if(bike.chassis.position.x>finishX) win();
+
+      var nowAirborne=!groundContact.wA && !groundContact.wB;
+      if(nowAirborne && !airborne){ airStartT=now; }
+      if(!nowAirborne && airborne){
+        var airtime=now-airStartT;
+        if(airtime>280){
+          airCount++; airStat.textContent=airCount;
+          spawnAura(bike.chassis.position.x,bike.chassis.position.y+16);
+          spawnPopup(bike.chassis.position.x,bike.chassis.position.y-46,'+'+Math.floor(airtime)+'ms AIR!','#e0c064');
+          shake=Math.max(shake,6);
+        }
+      }
+      airborne=nowAirborne;
+
+      trailA.push({x:bike.wA.position.x,y:bike.wA.position.y,life:0});
+      trailB.push({x:bike.wB.position.x,y:bike.wB.position.y,life:0});
+      if(trailA.length>16) trailA.shift();
+      if(trailB.length>16) trailB.shift();
+    }
+
+    for(var pI=popups.length-1;pI>=0;pI--){
+      popups[pI].life+=dt;
+      if(popups[pI].life>=popups[pI].maxLife) popups.splice(pI,1);
+    }
+    for(var aI=auras.length-1;aI>=0;aI--){
+      auras[aI].life+=dt;
+      if(auras[aI].life>=auras[aI].maxLife) auras.splice(aI,1);
+    }
+    if(shake>0) shake=Math.max(0,shake-dt*0.04);
+
+    render();
+  }
+
+  function render(){
+    ctx.clearRect(0,0,W,H);
+    var sky=ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0,'#8ec9f0'); sky.addColorStop(1,'#eaf6ff');
+    ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+
+    var camX=bike?bike.chassis.position.x-W*0.35:0, camY=60;
+    var shX=shake>0?(Math.random()-0.5)*shake:0, shY=shake>0?(Math.random()-0.5)*shake:0;
+    ctx.save(); ctx.translate(-camX+shX,-camY+shY);
+
+    for(var r=0;r<trackRuns.length;r++){
+      var pts=trackRuns[r], drawn=[];
+      for(var i=0;i<pts.length;i++){
+        if(pts[i].x<camX-150||pts[i].x>camX+W+150) continue;
+        drawn.push(pts[i]);
+      }
+      if(drawn.length<2) continue;
+      ctx.beginPath();
+      ctx.moveTo(drawn[0].x,drawn[0].y+400);
+      for(var j=0;j<drawn.length;j++) ctx.lineTo(drawn[j].x,drawn[j].y);
+      ctx.lineTo(drawn[drawn.length-1].x,drawn[drawn.length-1].y+400);
+      ctx.closePath();
+      ctx.fillStyle='#5b9d3f'; ctx.fill();
+      ctx.strokeStyle='#3f7a2a'; ctx.lineWidth=4; ctx.stroke();
+    }
+
+    ctx.fillStyle='#e0522a';
+    ctx.fillRect(finishX,groundYAt(finishX)-70,6,70);
+    ctx.fillRect(finishX+6,groundYAt(finishX)-70,22,14);
+
+    // wheel light trails (drawn under everything else)
+    function drawTrail(trail,hue1,hue2){
+      if(trail.length<2) return;
+      ctx.save(); ctx.lineCap='round'; ctx.globalCompositeOperation='lighter';
+      for(var i=1;i<trail.length;i++){
+        var t=i/trail.length;
+        var p0=trail[i-1], p1=trail[i];
+        ctx.strokeStyle=t<0.5?hue1:hue2;
+        ctx.globalAlpha=t*0.5;
+        ctx.lineWidth=6*t;
+        ctx.beginPath(); ctx.moveTo(p0.x,p0.y); ctx.lineTo(p1.x,p1.y); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    drawTrail(trailA,'#4fc3f7','#e0522a');
+    drawTrail(trailB,'#4fc3f7','#e0c064');
+
+    if(bike){
+      var c=bike.chassis, wA=bike.wA, wB=bike.wB;
+      var speed=Math.hypot(c.velocity.x,c.velocity.y);
+
+      ctx.strokeStyle='#1c1f26'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(wA.position.x,wA.position.y); ctx.lineTo(c.position.x,c.position.y); ctx.lineTo(wB.position.x,wB.position.y); ctx.stroke();
+
+      [wA,wB].forEach(function(w){
+        ctx.save(); ctx.translate(w.position.x,w.position.y); ctx.rotate(w.angle);
+        ctx.beginPath(); ctx.arc(0,0,17,0,Math.PI*2); ctx.fillStyle='#20232b'; ctx.fill();
+        ctx.strokeStyle='#e0522a'; ctx.lineWidth=3;
+        ctx.beginPath();
+        ctx.moveTo(0,0); ctx.lineTo(17,0); ctx.moveTo(0,0); ctx.lineTo(-17,0);
+        ctx.moveTo(0,0); ctx.lineTo(0,17); ctx.moveTo(0,0); ctx.lineTo(0,-17);
+        ctx.stroke(); ctx.restore();
+      });
+
+      ctx.save(); ctx.translate(c.position.x,c.position.y); ctx.rotate(c.angle);
+      ctx.fillStyle='#e0522a'; ctx.fillRect(-39,-11,78,22); ctx.restore();
+
+      drawRider(c.position.x,c.position.y,c.angle,speed);
+    }
+
+    // landing auras — expanding gold ring bursts
+    auras.forEach(function(a){
+      var t=a.life/a.maxLife;
+      var r=6+t*70;
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+      ctx.globalAlpha=(1-t)*0.85;
+      ctx.strokeStyle='#e0c064'; ctx.lineWidth=4-t*2.5;
+      ctx.beginPath(); ctx.arc(a.x,a.y,r,0,Math.PI*2); ctx.stroke();
+      ctx.globalAlpha=(1-t)*0.35;
+      ctx.strokeStyle='#e0522a'; ctx.lineWidth=8;
+      ctx.beginPath(); ctx.arc(a.x,a.y,r*0.7,0,Math.PI*2); ctx.stroke();
+      ctx.restore();
+    });
+
+    // trick/air popups
+    popups.forEach(function(p){
+      var t=p.life/p.maxLife;
+      ctx.save();
+      ctx.globalAlpha=1-t;
+      ctx.fillStyle=p.color;
+      ctx.font='bold 15px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.textAlign='center';
+      ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=3;
+      ctx.fillText(p.text,p.x,p.y-t*30);
+      ctx.restore();
+    });
+
+    ctx.restore();
+  }
+
+  requestAnimationFrame(frame);
+})();
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('sw.js').catch(function(){});
+  });
+}
+</script>
+</body>
+</html>
