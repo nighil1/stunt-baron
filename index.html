@@ -30,18 +30,28 @@
   #wrap{position:relative;width:100vw;height:100vh;display:flex;flex-direction:column;}
   #hud{
     display:flex;justify-content:space-between;align-items:center;
-    padding:10px 14px;background:var(--panel);
+    padding:10px 14px;background:linear-gradient(180deg,#22262f,#1a1d24);
     border-bottom:1px solid #333844;z-index:5;flex-shrink:0;
+    box-shadow:0 2px 10px rgba(0,0,0,0.35);
   }
-  #hud .title{font-size:15px;font-weight:600;letter-spacing:.5px;}
-  #hud .stats{display:flex;gap:16px;font-size:13px;color:var(--text-dim);}
-  #hud .stats b{color:var(--text);font-weight:600;}
+  #hud .title{font-size:15px;font-weight:700;letter-spacing:.5px;text-shadow:0 1px 0 rgba(0,0,0,0.4);}
+  #hud .stats{display:flex;gap:14px;font-size:12px;color:var(--text-dim);}
+  #hud .stats .stat{
+    display:flex;flex-direction:column;align-items:center;gap:1px;
+    background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);
+    border-radius:8px;padding:3px 8px;min-width:44px;
+  }
+  #hud .stats .stat span.lbl{font-size:9px;letter-spacing:.6px;color:var(--text-dim);}
+  #hud .stats b{color:var(--text);font-weight:700;font-size:13px;}
   #stage{position:relative;flex:1;overflow:hidden;}
   canvas{display:block;width:100%;height:100%;}
   #hint{
-    position:absolute;top:10px;left:0;right:0;text-align:center;
-    font-size:12px;color:var(--text-dim);pointer-events:none;z-index:4;
-    text-shadow:0 1px 2px rgba(0,0,0,0.4);
+    position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    max-width:88%;text-align:center;
+    font-size:11.5px;font-weight:600;color:#fff;pointer-events:none;z-index:4;
+    background:rgba(12,14,18,0.55);border:1px solid rgba(255,255,255,0.08);
+    padding:7px 14px;border-radius:10px;backdrop-filter:blur(2px);
+    line-height:1.4;
   }
   #overlay{
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
@@ -70,14 +80,20 @@
   #controls{padding:0 4vw 4vh;}
   .pedal{
     width:92px;height:92px;border-radius:50%;
-    border:3px solid #3a4051;background:rgba(28,31,38,0.88);
-    color:var(--text);font-size:30px;font-weight:700;
+    border:3px solid #3a4051;
+    background:radial-gradient(circle at 35% 30%,#2a2e38,#1c1f26 70%);
+    color:var(--text);font-size:26px;font-weight:700;
     display:flex;align-items:center;justify-content:center;flex-direction:column;
-    -webkit-tap-highlight-color:transparent;box-shadow:0 4px 14px rgba(0,0,0,0.35);
+    -webkit-tap-highlight-color:transparent;
+    box-shadow:0 4px 14px rgba(0,0,0,0.4),inset 0 2px 3px rgba(255,255,255,0.06);
     transition:transform .06s;
   }
-  .pedal small{font-size:11px;font-weight:600;color:var(--text-dim);letter-spacing:.5px;}
-  .pedal.active{background:var(--accent);border-color:#ffb088;transform:scale(0.94);box-shadow:0 0 22px rgba(224,82,42,0.7);}
+  .pedal small{font-size:10px;font-weight:700;color:var(--text-dim);letter-spacing:.8px;margin-top:1px;}
+  .pedal.active{
+    background:radial-gradient(circle at 35% 30%,#ff7a4d,var(--accent) 70%);
+    border-color:#ffb088;transform:scale(0.94);
+    box-shadow:0 0 26px rgba(224,82,42,0.75),inset 0 2px 3px rgba(255,255,255,0.2);
+  }
   .pedal.active small{color:#fff;}
 </style>
 </head>
@@ -86,10 +102,10 @@
   <div id="hud">
     <div class="title">Stunt Baron</div>
     <div class="stats">
-      <div>Distance <b id="distStat">0 m</b></div>
-      <div>Best <b id="bestStat">0 m</b></div>
-      <div>Air <b id="airStat">0</b></div>
-      <div>Coins <b id="coinStat">0</b></div>
+      <div class="stat">🏁<span class="lbl">DIST</span><b id="distStat">0 m</b></div>
+      <div class="stat">🏆<span class="lbl">BEST</span><b id="bestStat">0 m</b></div>
+      <div class="stat">🪂<span class="lbl">AIR</span><b id="airStat">0</b></div>
+      <div class="stat">🪙<span class="lbl">COINS</span><b id="coinStat">0</b></div>
     </div>
   </div>
   <div id="stage">
@@ -137,7 +153,7 @@
   var trackRuns=[], groundBodies=[], finishX=0;
   var JUMP_START=2200, JUMP_END=2420, LAND_END=2720;
   var JUMP2_START=4300, JUMP2_END=4460, JUMP2_LAND_END=4680;
-  var coins=[], hazards=[], hazardBodies=[];
+  var coins=[];
 
   function genTrack(){
     var step=34, baseY=420, x=-200, points=[];
@@ -191,17 +207,6 @@
         }
       }
     }
-
-    // hazard spikes: small static triangles that end the run if the chassis clips them
-    var hazardXs=[1050,1750,3250,3850,5250];
-    hazardXs.forEach(function(hx){
-      if(hx>finishX-150) return;
-      var hy=groundYAt(hx);
-      var body=Bodies.polygon(hx,hy-11,3,13,{isStatic:true,angle:-Math.PI/2,friction:1,label:'hazard'});
-      hazards.push({x:hx,y:hy});
-      hazardBodies.push(body);
-    });
-    World.add(world,hazardBodies);
   }
   genTrack();
 
@@ -238,13 +243,32 @@
   var shake=0;
   var auras=[]; // {x,y,r,life,maxLife}
   var popups=[]; // {x,y,text,life,maxLife,color}
+  var dust=[]; // {x,y,vx,vy,life,maxLife,r,color}
+  var sparkles=[]; // {x,y,vx,vy,life,maxLife}
+
+  function spawnDust(x,y,n,color){
+    for(var i=0;i<n;i++){
+      dust.push({
+        x:x+(Math.random()-0.5)*10, y:y+(Math.random()-0.5)*6,
+        vx:(Math.random()-0.5)*1.4, vy:-Math.random()*1.2-0.3,
+        life:0, maxLife:400+Math.random()*260, r:3+Math.random()*3,
+        color:color||'rgba(150,120,90,0.55)'
+      });
+    }
+  }
+  function spawnSparkles(x,y){
+    for(var i=0;i<7;i++){
+      var a=Math.random()*Math.PI*2, sp=0.6+Math.random()*1.6;
+      sparkles.push({x:x,y:y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-0.4,life:0,maxLife:380+Math.random()*160});
+    }
+  }
 
   function resetBike(){
     if(bike) World.remove(world,[bike.chassis,bike.wA,bike.wB,bike.axA,bike.axB]);
     bike=makeBike(0,groundYAt(0)-40);
     crashed=false; finished=false; maxDist=0; airCount=0; coinCount=0;
     distStat.textContent='0 m'; airStat.textContent='0'; coinStat.textContent='0';
-    trailA=[]; trailB=[]; auras=[]; popups=[]; shake=0;
+    trailA=[]; trailB=[]; auras=[]; popups=[]; shake=0; dust=[]; sparkles=[];
     groundContact.wA=false; groundContact.wB=false; airborne=false;
     holdAccel=0; holdReverse=0;
     coins.forEach(function(c){c.taken=false;});
@@ -263,9 +287,6 @@
       var pair=e.pairs[k];
       var labels=[pair.bodyA.label,pair.bodyB.label];
       if(labels.indexOf('chassis')>-1 && labels.indexOf('ground')>-1 && !crashed && !finished){
-        crash();
-      }
-      if((labels.indexOf('chassis')>-1||labels.indexOf('wheel')>-1) && labels.indexOf('hazard')>-1 && !crashed && !finished){
         crash();
       }
       if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
@@ -395,84 +416,85 @@
 
   var MAX_SPIN=1.1;
   var holdAccel=0, holdReverse=0;
-  var MAX_TILT_SPEED=0.075;
+  var MAX_TILT_SPEED=0.16;
   function applyControls(dt){
     if(crashed||finished||!bike) return;
 
     if(input.accel){
+      // accel keeps driving the wheels even mid-air — that's normal engine behavior
+      // and gives a natural kick when the tires bite back on landing
       Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+0.07,MAX_SPIN));
       Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+0.07,MAX_SPIN));
-      holdAccel=Math.min(holdAccel+dt,700); holdReverse=0;
-    } else if(input.reverse){
+    } else if(input.reverse && !airborne){
+      // reverse only grips while grounded — applying it mid-air was causing an
+      // unpredictable jolt the instant the wheels touched back down
       Body.setAngularVelocity(bike.wA,Math.max(bike.wA.angularVelocity-0.09,-MAX_SPIN*0.7));
       Body.setAngularVelocity(bike.wB,Math.max(bike.wB.angularVelocity-0.09,-MAX_SPIN*0.7));
-      holdReverse=Math.min(holdReverse+dt,700); holdAccel=0;
-    } else {
-      holdAccel=Math.max(holdAccel-dt*2,0); holdReverse=Math.max(holdReverse-dt*2,0);
     }
+
+    if(input.accel){ holdAccel=Math.min(holdAccel+dt,700); holdReverse=0; }
+    else if(input.reverse){ holdReverse=Math.min(holdReverse+dt,700); holdAccel=0; }
+    else { holdAccel=Math.max(holdAccel-dt*2,0); holdReverse=Math.max(holdReverse-dt*2,0); }
 
     // auto-tilt: only takes over while airborne, so ground handling stays natural
     if(airborne){
       var targetAV=0;
-      if(input.accel) targetAV=-(0.03+0.045*(holdAccel/700));
-      else if(input.reverse) targetAV=(0.03+0.045*(holdReverse/700));
+      if(input.accel) targetAV=-(0.06+0.11*(holdAccel/700));
+      else if(input.reverse) targetAV=(0.06+0.11*(holdReverse/700));
       var av=bike.chassis.angularVelocity;
-      var blended=av+(targetAV-av)*0.15;
+      var blended=av+(targetAV-av)*0.28;
       blended=Math.max(-MAX_TILT_SPEED,Math.min(MAX_TILT_SPEED,blended));
       Body.setAngularVelocity(bike.chassis,blended);
     } else {
-      // grounded stabilization: gently damp any leftover spin so it doesn't feel twitchy
-      Body.setAngularVelocity(bike.chassis,bike.chassis.angularVelocity*0.94);
+      // grounded stabilization: stronger damping + a hard clamp so hitting bumps
+      // at high speed doesn't fling the chassis into a spin. Doesn't touch wheel
+      // speed at all, so top speed is unaffected.
+      var dampedAV=bike.chassis.angularVelocity*0.82;
+      var GROUND_TILT_CAP=0.05;
+      dampedAV=Math.max(-GROUND_TILT_CAP,Math.min(GROUND_TILT_CAP,dampedAV));
+      Body.setAngularVelocity(bike.chassis,dampedAV);
     }
   }
 
   function drawRider(cx,cy,angle,speed){
     ctx.save(); ctx.translate(cx,cy); ctx.rotate(angle);
-    var flow=Math.min(speed*0.6,14);
+    var air=airborne?1:0;
 
-    // cape, streaming back with speed
-    ctx.fillStyle='rgba(18,20,26,0.88)';
-    ctx.beginPath();
-    ctx.moveTo(0,-11);
-    ctx.quadraticCurveTo(-18-flow,-4,-34-flow*1.6,8);
-    ctx.quadraticCurveTo(-30-flow,-16,-10,-19);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle='rgba(224,82,42,0.35)';
-    ctx.beginPath();
-    ctx.moveTo(-2,-13);
-    ctx.quadraticCurveTo(-16-flow,-8,-28-flow*1.4,2);
-    ctx.quadraticCurveTo(-22-flow,-15,-8,-17);
-    ctx.closePath(); ctx.fill();
+    // legs — crouched on the pegs while grounded, kicked back slightly in the air
+    ctx.strokeStyle='#181a1f'; ctx.lineWidth=6; ctx.lineCap='round';
+    var kneeX=-8-air*3, kneeY=-2, footX=-14-air*8, footY=8+air*2;
+    ctx.beginPath(); ctx.moveTo(-4,-9); ctx.lineTo(kneeX,kneeY); ctx.lineTo(footX,footY); ctx.stroke();
+    ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.ellipse(footX,footY,4.2,3,0.3,0,Math.PI*2); ctx.fill();
 
-    // torso + arm
-    ctx.strokeStyle='#1c1f26'; ctx.lineWidth=5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(-4,-8); ctx.lineTo(2,-28); ctx.lineTo(14,-20); ctx.stroke();
+    // torso — leaned forward in a racing crouch, orange jacket stripe over black
+    var shX=6-air*2, shY=-27-air*2;
+    ctx.strokeStyle='#181a1f'; ctx.lineWidth=7; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(-4,-9); ctx.lineTo(shX,shY); ctx.stroke();
+    ctx.strokeStyle='#e0522a'; ctx.lineWidth=2.4;
+    ctx.beginPath(); ctx.moveTo(-3,-11); ctx.lineTo(shX-1,shY+3); ctx.stroke();
 
-    // gold shoulder plate
-    ctx.fillStyle='#e0c064';
-    ctx.beginPath(); ctx.ellipse(2,-27,6.5,3.2,0.3,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='#8a6a2a'; ctx.lineWidth=1; ctx.stroke();
+    // arm reaching to the handlebar
+    var handX=24, handY=-13;
+    ctx.strokeStyle='#181a1f'; ctx.lineWidth=5; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(shX,shY); ctx.lineTo(handX,handY); ctx.stroke();
+    ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.arc(handX,handY,3,0,Math.PI*2); ctx.fill();
 
-    // long hair streaming back
-    ctx.strokeStyle='#20232b'; ctx.lineWidth=3; ctx.lineCap='round';
-    ctx.beginPath();
-    ctx.moveTo(3,-35); ctx.quadraticCurveTo(-8-flow*0.5,-30,-20-flow,-20);
-    ctx.moveTo(4,-36); ctx.quadraticCurveTo(-10-flow*0.6,-26,-26-flow*1.2,-10);
-    ctx.moveTo(5,-35); ctx.quadraticCurveTo(-6-flow*0.4,-34,-16-flow*0.8,-28);
-    ctx.stroke();
-
-    // head — drawn from rider-face.png so it can be swapped out manually
-    var headR=15;
+    // helmet — colored shell with a visor band; the swappable face shows through the visor
+    var headX=shX-2, headY=shY-9, headR=13;
+    ctx.fillStyle='#e0522a'; ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.fill();
+    ctx.save();
+    ctx.beginPath(); ctx.arc(headX,headY+1,headR-3.5,0,Math.PI*2); ctx.clip();
     if(faceImgReady){
-      ctx.save();
-      ctx.beginPath(); ctx.arc(4,-34,headR,0,Math.PI*2); ctx.clip();
-      ctx.drawImage(faceImg,4-headR,-34-headR,headR*2,headR*2);
-      ctx.restore();
+      ctx.drawImage(faceImg,headX-(headR-3.5),headY+1-(headR-3.5),(headR-3.5)*2,(headR-3.5)*2);
     } else {
-      ctx.fillStyle='#e0522a'; ctx.beginPath(); ctx.arc(4,-34,headR,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#f2c9a0'; ctx.fillRect(headX-headR,headY-headR,headR*2,headR*2);
     }
-    ctx.strokeStyle='#e0c064'; ctx.lineWidth=1.6;
-    ctx.beginPath(); ctx.arc(4,-34,headR+0.6,-2.5,-0.6); ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle='#a8391c'; ctx.lineWidth=1.6; ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.stroke();
+    // visor
+    ctx.fillStyle='rgba(70,150,220,0.55)';
+    ctx.beginPath(); ctx.ellipse(headX+5,headY+1,5.5,6.5,0,-1.3,1.3); ctx.fill();
+    ctx.strokeStyle='#2a2e38'; ctx.lineWidth=1.2; ctx.stroke();
 
     ctx.restore();
   }
@@ -494,6 +516,7 @@
       if(!nowAirborne && airborne){
         var airtime=now-airStartT;
         if(airtime>80) playLand();
+        spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),9,'rgba(150,120,90,0.5)');
         if(airtime>280){
           airCount++; airStat.textContent=airCount;
           spawnAura(bike.chassis.position.x,bike.chassis.position.y+16);
@@ -505,6 +528,10 @@
 
       updateEngineSound(bike.wA.angularVelocity);
 
+      if(!airborne && input.accel && Math.random()<0.5){
+        spawnDust(bike.wA.position.x,bike.wA.position.y+10,1,'rgba(150,120,90,0.4)');
+      }
+
       for(var ci=0;ci<coins.length;ci++){
         var co=coins[ci];
         if(co.taken) continue;
@@ -512,6 +539,7 @@
           co.taken=true; coinCount++; coinStat.textContent=coinCount;
           playCoin();
           spawnPopup(co.x,co.y-10,'+1','#ffd75e');
+          spawnSparkles(co.x,co.y);
         }
       }
 
@@ -529,6 +557,16 @@
       auras[aI].life+=dt;
       if(auras[aI].life>=auras[aI].maxLife) auras.splice(aI,1);
     }
+    for(var dI=dust.length-1;dI>=0;dI--){
+      var dp=dust[dI];
+      dp.life+=dt; dp.x+=dp.vx; dp.y+=dp.vy; dp.vy+=0.01*dt;
+      if(dp.life>=dp.maxLife) dust.splice(dI,1);
+    }
+    for(var sI=sparkles.length-1;sI>=0;sI--){
+      var sp=sparkles[sI];
+      sp.life+=dt; sp.x+=sp.vx; sp.y+=sp.vy; sp.vy+=0.015*dt;
+      if(sp.life>=sp.maxLife) sparkles.splice(sI,1);
+    }
     if(shake>0) shake=Math.max(0,shake-dt*0.04);
 
     render();
@@ -537,7 +575,7 @@
   function render(){
     ctx.clearRect(0,0,W,H);
     var sky=ctx.createLinearGradient(0,0,0,H);
-    sky.addColorStop(0,'#8ec9f0'); sky.addColorStop(1,'#eaf6ff');
+    sky.addColorStop(0,'#7ec2ef'); sky.addColorStop(0.7,'#bfe3f7'); sky.addColorStop(1,'#eef9ea');
     ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
 
     var camX=bike?bike.chassis.position.x-W*0.35:0, camY=60;
@@ -545,8 +583,11 @@
     ctx.save(); ctx.translate(-camX+shX,-camY+shY);
 
     // parallax scenery — far mountains, near hills, clouds, sun
-    ctx.fillStyle='#fff7e0'; ctx.globalAlpha=0.9;
-    ctx.beginPath(); ctx.arc(camX+W*0.78,120,46,0,Math.PI*2); ctx.fill(); ctx.globalAlpha=1;
+    var sunX=camX+W*0.78, sunY=120;
+    var sunGlow=ctx.createRadialGradient(sunX,sunY,4,sunX,sunY,60);
+    sunGlow.addColorStop(0,'rgba(255,247,224,0.95)'); sunGlow.addColorStop(1,'rgba(255,247,224,0)');
+    ctx.fillStyle=sunGlow; ctx.beginPath(); ctx.arc(sunX,sunY,60,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff7e0'; ctx.beginPath(); ctx.arc(sunX,sunY,30,0,Math.PI*2); ctx.fill();
 
     function ridge(parallax,baseline,amp,period,color){
       var ox=camX*parallax;
@@ -559,9 +600,59 @@
       ctx.lineTo(camX+W+100,baseline+400);
       ctx.closePath();
       ctx.fillStyle=color; ctx.fill();
+      return ox;
     }
     ridge(0.25,300,90,340,'#b9d8ec');
-    ridge(0.45,340,60,220,'#a3cde3');
+    var nearOx=ridge(0.45,340,60,220,'#a3cde3');
+
+    // hill-layer scenery — pine + round trees, windmill & cottage, fence posts,
+    // styled after the reference sheet's "Hills & Trees" layer
+    for(var tx=camX-100;tx<camX+W+100;tx+=95){
+      var seed=Math.abs(Math.sin(tx*0.017))%1;
+      var ty=340-Math.abs(Math.sin((tx-nearOx)/220))*60;
+      if(seed>0.42 && seed<0.72){
+        ctx.fillStyle='#7fae5a'; ctx.globalAlpha=0.55;
+        ctx.beginPath();
+        ctx.moveTo(tx,ty-30); ctx.lineTo(tx-9,ty-6); ctx.lineTo(tx+9,ty-6); ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(tx,ty-22); ctx.lineTo(tx-7,ty+2); ctx.lineTo(tx+7,ty+2); ctx.closePath(); ctx.fill();
+        ctx.globalAlpha=1;
+      } else if(seed>=0.72){
+        ctx.globalAlpha=0.55;
+        ctx.strokeStyle='#5a4326'; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx,ty-14); ctx.stroke();
+        ctx.fillStyle='#6fb356';
+        ctx.beginPath(); ctx.arc(tx,ty-20,10,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(tx-6,ty-16,7,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(tx+6,ty-16,7,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=1;
+      } else if(seed>0.1 && seed<0.16){
+        // fence posts
+        ctx.globalAlpha=0.5; ctx.strokeStyle='#6b4a2a'; ctx.lineWidth=2.4;
+        ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx,ty-12); ctx.moveTo(tx+16,ty); ctx.lineTo(tx+16,ty-12);
+        ctx.moveTo(tx,ty-9); ctx.lineTo(tx+16,ty-9); ctx.stroke();
+        ctx.globalAlpha=1;
+      }
+    }
+
+    // a little windmill + cottage silhouette, once per screen-ish, matching the reference sheet
+    var windmillX=Math.round(camX/2600)*2600+1400;
+    if(windmillX>camX-150 && windmillX<camX+W+150){
+      var wty=340-Math.abs(Math.sin((windmillX-nearOx)/220))*60;
+      ctx.globalAlpha=0.6;
+      ctx.fillStyle='#e8ddc8'; ctx.fillRect(windmillX-9,wty-24,18,24);
+      ctx.fillStyle='#a83a2a'; ctx.beginPath(); ctx.moveTo(windmillX-11,wty-24); ctx.lineTo(windmillX,wty-34); ctx.lineTo(windmillX+11,wty-24); ctx.closePath(); ctx.fill();
+      var spin=performance.now()/900;
+      ctx.strokeStyle='#5a4326'; ctx.lineWidth=1.6;
+      for(var bl=0;bl<4;bl++){
+        var ba=spin+bl*(Math.PI/2);
+        ctx.beginPath(); ctx.moveTo(windmillX,wty-30); ctx.lineTo(windmillX+Math.cos(ba)*13,wty-30+Math.sin(ba)*13); ctx.stroke();
+      }
+      // cottage beside it
+      ctx.fillStyle='#f0e6d2'; ctx.fillRect(windmillX-42,wty-16,26,16);
+      ctx.fillStyle='#a83a2a'; ctx.beginPath(); ctx.moveTo(windmillX-45,wty-16); ctx.lineTo(windmillX-29,wty-26); ctx.lineTo(windmillX-13,wty-16); ctx.closePath(); ctx.fill();
+      ctx.globalAlpha=1;
+    }
 
     function cloud(cxp,cy,scale,parallax){
       var ox=(camX*parallax)%2000;
@@ -583,39 +674,122 @@
         drawn.push(pts[i]);
       }
       if(drawn.length<2) continue;
+
       ctx.beginPath();
       ctx.moveTo(drawn[0].x,drawn[0].y+400);
       for(var j=0;j<drawn.length;j++) ctx.lineTo(drawn[j].x,drawn[j].y);
       ctx.lineTo(drawn[drawn.length-1].x,drawn[drawn.length-1].y+400);
       ctx.closePath();
-      ctx.fillStyle='#5b9d3f'; ctx.fill();
+
+      // layered soil: grass -> dark edge -> dirt -> darker undersoil
+      var minY=drawn[0].y; for(var yi=1;yi<drawn.length;yi++){ if(drawn[yi].y<minY) minY=drawn[yi].y; }
+      var soil=ctx.createLinearGradient(0,minY,0,minY+220);
+      soil.addColorStop(0,'#5b9d3f');
+      soil.addColorStop(0.05,'#3f7a2a');
+      soil.addColorStop(0.14,'#8a5a34');
+      soil.addColorStop(0.55,'#6e4526');
+      soil.addColorStop(1,'#4a2e1a');
+      ctx.fillStyle=soil; ctx.fill();
       ctx.strokeStyle='#3f7a2a'; ctx.lineWidth=4; ctx.stroke();
+
+      // embedded pebbles in the dirt, deterministic per-x so no flicker frame to frame
+      ctx.save(); ctx.clip();
+      for(var pxk=0;pxk<drawn.length;pxk+=3){
+        var pp=drawn[pxk];
+        var pseed=Math.abs(Math.sin(pp.x*3.71))%1;
+        if(pseed<0.75) continue;
+        ctx.fillStyle='#5a3a22';
+        ctx.beginPath(); ctx.ellipse(pp.x+((pseed*40)|0)-20,pp.y+34+((pseed*60)|0)%40,4,3,0,0,Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+
+      // grass tufts + occasional flowers riding the very top edge
+      for(var gi=0;gi<drawn.length-1;gi++){
+        var g0=drawn[gi], g1=drawn[gi+1];
+        var seg=6;
+        for(var s=0;s<seg;s++){
+          var t=s/seg;
+          var gx=g0.x+(g1.x-g0.x)*t, gy=g0.y+(g1.y-g0.y)*t;
+          var gseed=Math.abs(Math.sin(gx*12.9898))%1;
+          if(gseed>0.55){
+            var bladeH=4+gseed*6;
+            ctx.strokeStyle='#3f8a2e'; ctx.lineWidth=1.4; ctx.lineCap='round';
+            ctx.beginPath();
+            ctx.moveTo(gx-2,gy); ctx.quadraticCurveTo(gx-1,gy-bladeH*0.6,gx-2.5,gy-bladeH);
+            ctx.moveTo(gx+2,gy); ctx.quadraticCurveTo(gx+1,gy-bladeH*0.6,gx+2.5,gy-bladeH);
+            ctx.stroke();
+          }
+          if(gseed>0.93){
+            ctx.fillStyle='#ff9fc7';
+            for(var pk=0;pk<4;pk++){
+              var pa=pk*(Math.PI/2);
+              ctx.beginPath(); ctx.ellipse(gx+Math.cos(pa)*2.6,gy-6+Math.sin(pa)*2.6,1.8,1.8,0,0,Math.PI*2); ctx.fill();
+            }
+            ctx.fillStyle='#ffe066';
+            ctx.beginPath(); ctx.arc(gx,gy-6,1.4,0,Math.PI*2); ctx.fill();
+          } else if(gseed<0.06){
+            ctx.fillStyle='#8a8f99';
+            ctx.beginPath(); ctx.ellipse(gx,gy-2,3.6,2.2,0,0,Math.PI*2); ctx.fill();
+          }
+        }
+      }
+    }
+
+    // trackside bushes and rocks, sitting right on the ground — decorative only
+    for(var bx=camX-150;bx<camX+W+150;bx+=140){
+      var bseed=Math.abs(Math.sin(bx*0.041))%1;
+      if((bx>JUMP_START-80&&bx<LAND_END+80)||(bx>JUMP2_START-80&&bx<JUMP2_LAND_END+80)) continue;
+      var bgy=groundYAt(bx);
+      if(bseed>0.5 && bseed<0.75){
+        ctx.fillStyle='#4f9a3f';
+        ctx.beginPath(); ctx.ellipse(bx,bgy-6,11,8,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(bx-7,bgy-3,7,5,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(bx+7,bgy-3,7,5,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#ff9fc7';
+        ctx.beginPath(); ctx.arc(bx-4,bgy-7,1.6,0,Math.PI*2); ctx.arc(bx+5,bgy-6,1.6,0,Math.PI*2); ctx.fill();
+      } else if(bseed>=0.75){
+        ctx.fillStyle='#8f8f96'; ctx.strokeStyle='#6b6b72'; ctx.lineWidth=1.4;
+        ctx.beginPath(); ctx.ellipse(bx,bgy-4,9,6,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle='#a8a8ae'; ctx.beginPath(); ctx.ellipse(bx-2,bgy-6,3,2,0,0,Math.PI*2); ctx.fill();
+      }
+    }
+
+    // wooden welcome sign near the start, purely decorative
+    var signX=-40, signGY=groundYAt(signX);
+    if(signX>camX-150 && signX<camX+W+150){
+      ctx.save(); ctx.translate(signX,signGY);
+      ctx.fillStyle='#7a5230'; ctx.fillRect(-3,-46,6,46);
+      ctx.fillStyle='#8a5a34'; ctx.strokeStyle='#5a3a1f'; ctx.lineWidth=2;
+      ctx.beginPath(); if(ctx.roundRect) ctx.roundRect(-34,-64,68,26,4); else ctx.rect(-34,-64,68,26);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle='#f2e6c8'; ctx.font='bold 11px -apple-system,BlinkMacSystemFont,sans-serif'; ctx.textAlign='center';
+      ctx.fillText('STUNT',0,-54);
+      ctx.fillText('BARON',0,-43);
+      ctx.restore();
     }
 
     ctx.fillStyle='#e0522a';
     ctx.fillRect(finishX,groundYAt(finishX)-70,6,70);
     ctx.fillRect(finishX+6,groundYAt(finishX)-70,22,14);
 
-    hazards.forEach(function(hz){
-      if(hz.x<camX-100||hz.x>camX+W+100) return;
-      ctx.save();
-      ctx.fillStyle='#c0392b'; ctx.strokeStyle='#7a1f16'; ctx.lineWidth=2;
-      ctx.beginPath();
-      ctx.moveTo(hz.x,hz.y-24); ctx.lineTo(hz.x-11,hz.y); ctx.lineTo(hz.x+11,hz.y);
-      ctx.closePath(); ctx.fill(); ctx.stroke();
-      ctx.restore();
-    });
-
     coins.forEach(function(co){
       if(co.taken) return;
       if(co.x<camX-100||co.x>camX+W+100) return;
       var bob=Math.sin(performance.now()/260+co.x)*3;
+      var spin=Math.cos(performance.now()/420+co.x*0.3);
       ctx.save();
       ctx.translate(co.x,co.y+bob);
-      ctx.fillStyle='#ffd75e'; ctx.strokeStyle='#c98f1f'; ctx.lineWidth=2;
+      ctx.scale(Math.max(0.25,Math.abs(spin)),1);
+      var coinGrad=ctx.createLinearGradient(-9,-9,9,9);
+      coinGrad.addColorStop(0,'#fff1b8'); coinGrad.addColorStop(0.5,'#ffd75e'); coinGrad.addColorStop(1,'#e0a622');
+      ctx.fillStyle=coinGrad; ctx.strokeStyle='#c98f1f'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(0,0,9,0,Math.PI*2); ctx.fill(); ctx.stroke();
-      ctx.fillStyle='#c98f1f'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('$',0,1);
+      ctx.fillStyle='rgba(255,255,255,0.7)';
+      ctx.beginPath(); ctx.ellipse(-3,-3,2.6,1.4,-0.6,0,Math.PI*2); ctx.fill();
+      if(spin>0.15){
+        ctx.fillStyle='#c98f1f'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('$',0,1);
+      }
       ctx.restore();
     });
 
@@ -636,25 +810,96 @@
     drawTrail(trailA,'#4fc3f7','#e0522a');
     drawTrail(trailB,'#4fc3f7','#e0c064');
 
+    // dust particles (tire kick-up and landing puffs)
+    dust.forEach(function(dp){
+      var t=dp.life/dp.maxLife;
+      ctx.save();
+      ctx.globalAlpha=(1-t)*0.6;
+      ctx.fillStyle=dp.color;
+      ctx.beginPath(); ctx.arc(dp.x,dp.y,dp.r*(0.6+t*0.8),0,Math.PI*2); ctx.fill();
+      ctx.restore();
+    });
+
     if(bike){
       var c=bike.chassis, wA=bike.wA, wB=bike.wB;
       var speed=Math.hypot(c.velocity.x,c.velocity.y);
 
-      ctx.strokeStyle='#1c1f26'; ctx.lineWidth=4;
+      // soft ground shadow — shrinks/fades the higher off the ground the bike is
+      var shY2=groundYAt(c.position.x);
+      var heightOff=Math.max(0,shY2-c.position.y-14);
+      var shadowScale=Math.max(0.15,1-heightOff/140);
+      ctx.save();
+      ctx.globalAlpha=0.28*shadowScale;
+      ctx.fillStyle='#1a1208';
+      ctx.beginPath(); ctx.ellipse(c.position.x,shY2+4,44*shadowScale,9*shadowScale,0,0,Math.PI*2); ctx.fill();
+      ctx.restore();
+
+      // suspension struts (visual only — actual physics is the axle constraint)
+      ctx.strokeStyle='#565d6b'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(wA.position.x,wA.position.y); ctx.lineTo(c.position.x,c.position.y); ctx.lineTo(wB.position.x,wB.position.y); ctx.stroke();
+      ctx.strokeStyle='#1c1f26'; ctx.lineWidth=1.4;
       ctx.beginPath(); ctx.moveTo(wA.position.x,wA.position.y); ctx.lineTo(c.position.x,c.position.y); ctx.lineTo(wB.position.x,wB.position.y); ctx.stroke();
 
       [wA,wB].forEach(function(w){
         ctx.save(); ctx.translate(w.position.x,w.position.y); ctx.rotate(w.angle);
-        ctx.beginPath(); ctx.arc(0,0,17,0,Math.PI*2); ctx.fillStyle='#20232b'; ctx.fill();
-        ctx.strokeStyle='#e0522a'; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.arc(0,0,17,0,Math.PI*2); ctx.fillStyle='#17191f'; ctx.fill();
+        ctx.strokeStyle='#000'; ctx.lineWidth=1; ctx.stroke();
+        // knobby tread
+        ctx.strokeStyle='#000'; ctx.lineWidth=2.4;
+        for(var kn=0;kn<10;kn++){
+          var ka=kn*(Math.PI/5);
+          ctx.beginPath(); ctx.moveTo(Math.cos(ka)*14.5,Math.sin(ka)*14.5); ctx.lineTo(Math.cos(ka)*17.5,Math.sin(ka)*17.5); ctx.stroke();
+        }
+        // metallic rim
+        ctx.beginPath(); ctx.arc(0,0,11,0,Math.PI*2); ctx.fillStyle='#8a909c'; ctx.fill();
+        ctx.beginPath(); ctx.arc(0,0,11,0,Math.PI*2); ctx.strokeStyle='#5a6070'; ctx.lineWidth=1.4; ctx.stroke();
+        // spokes
+        ctx.strokeStyle='#3a4051'; ctx.lineWidth=2;
         ctx.beginPath();
-        ctx.moveTo(0,0); ctx.lineTo(17,0); ctx.moveTo(0,0); ctx.lineTo(-17,0);
-        ctx.moveTo(0,0); ctx.lineTo(0,17); ctx.moveTo(0,0); ctx.lineTo(0,-17);
-        ctx.stroke(); ctx.restore();
+        ctx.moveTo(0,0); ctx.lineTo(10,0); ctx.moveTo(0,0); ctx.lineTo(-10,0);
+        ctx.moveTo(0,0); ctx.lineTo(0,10); ctx.moveTo(0,0); ctx.lineTo(0,-10);
+        ctx.moveTo(0,0); ctx.lineTo(7,7); ctx.moveTo(0,0); ctx.lineTo(-7,-7);
+        ctx.moveTo(0,0); ctx.lineTo(7,-7); ctx.moveTo(0,0); ctx.lineTo(-7,7);
+        ctx.stroke();
+        // hub
+        ctx.beginPath(); ctx.arc(0,0,3.4,0,Math.PI*2); ctx.fillStyle='#e0522a'; ctx.fill();
+        ctx.restore();
       });
 
+      // fenders — arcs over each wheel, motocross-style
+      [[wA,-1],[wB,1]].forEach(function(pair){
+        var w=pair[0];
+        ctx.save(); ctx.translate(w.position.x,w.position.y); ctx.rotate(c.angle);
+        ctx.strokeStyle='#a83a1c'; ctx.lineWidth=4; ctx.lineCap='round';
+        ctx.beginPath(); ctx.arc(0,-2,20,-2.6,-0.5); ctx.stroke();
+        ctx.restore();
+      });
+
+      // exhaust pipe at the rear-underside of the chassis
       ctx.save(); ctx.translate(c.position.x,c.position.y); ctx.rotate(c.angle);
-      ctx.fillStyle='#e0522a'; ctx.fillRect(-39,-11,78,22); ctx.restore();
+      ctx.fillStyle='#2a2e38'; ctx.fillRect(-46,4,12,7);
+      ctx.fillStyle='#565d6b'; ctx.fillRect(-48,5,4,5);
+      ctx.restore();
+      if(!airborne && input.accel && Math.random()<0.35){
+        var exX=c.position.x-Math.cos(c.angle)*46, exY=c.position.y+Math.sin(-c.angle)*4+8;
+        spawnDust(exX,exY,1,'rgba(120,124,132,0.35)');
+      }
+
+      // frame — metallic gradient body over the accent color
+      ctx.save(); ctx.translate(c.position.x,c.position.y); ctx.rotate(c.angle);
+      var frameGrad=ctx.createLinearGradient(0,-11,0,11);
+      frameGrad.addColorStop(0,'#ff7a4d'); frameGrad.addColorStop(0.5,'#e0522a'); frameGrad.addColorStop(1,'#a83a1c');
+      ctx.fillStyle=frameGrad;
+      ctx.beginPath();
+      if(ctx.roundRect) ctx.roundRect(-39,-11,78,22,6); else ctx.rect(-39,-11,78,22);
+      ctx.fill();
+      ctx.strokeStyle='#7a2a12'; ctx.lineWidth=1.6; ctx.stroke();
+      ctx.fillStyle='rgba(255,255,255,0.25)';
+      ctx.fillRect(-33,-8,50,3);
+      // handlebar
+      ctx.strokeStyle='#2a2e38'; ctx.lineWidth=3; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(30,-10); ctx.lineTo(38,-20); ctx.stroke();
+      ctx.restore();
 
       drawRider(c.position.x,c.position.y,c.angle,speed);
     }
@@ -684,6 +929,16 @@
       ctx.textAlign='center';
       ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=3;
       ctx.fillText(p.text,p.x,p.y-t*30);
+      ctx.restore();
+    });
+
+    // coin-collection sparkles
+    sparkles.forEach(function(sp){
+      var t=sp.life/sp.maxLife;
+      ctx.save();
+      ctx.globalAlpha=1-t;
+      ctx.fillStyle='#fff1b8';
+      ctx.beginPath(); ctx.arc(sp.x,sp.y,2.4*(1-t*0.5),0,Math.PI*2); ctx.fill();
       ctx.restore();
     });
 
