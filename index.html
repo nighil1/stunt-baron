@@ -60,6 +60,16 @@
   #overlay.hidden{display:none;}
   #overlay h2{margin:0;font-size:20px;}
   #overlay p{margin:0;font-size:13px;color:var(--text-dim);max-width:280px;}
+  #skinPicker{display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;justify-content:center;max-width:300px;}
+  .skinBtn{
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:10px 14px;border-radius:12px;border:2px solid #3a4051;
+    background:rgba(255,255,255,0.05);font-size:26px;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;transition:transform .1s;
+  }
+  .skinBtn span{font-size:10px;font-weight:700;color:var(--text-dim);letter-spacing:.4px;}
+  .skinBtn.selected{border-color:var(--accent);background:rgba(224,82,42,0.18);transform:scale(1.05);}
+  .skinBtn.selected span{color:#fff;}
   #overlay button{
     margin-top:6px;padding:10px 22px;border-radius:8px;border:none;
     background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
@@ -102,6 +112,7 @@
   <div id="hud">
     <div class="title">Stunt Baron</div>
     <div class="stats">
+      <div class="stat">🎮<span class="lbl">LVL</span><b id="levelStat">1</b></div>
       <div class="stat">🏁<span class="lbl">DIST</span><b id="distStat">0 m</b></div>
       <div class="stat">🏆<span class="lbl">BEST</span><b id="bestStat">0 m</b></div>
       <div class="stat">🪂<span class="lbl">AIR</span><b id="airStat">0</b></div>
@@ -121,7 +132,13 @@
     </div>
     <div id="overlay">
       <h2 id="overlayTitle">Stunt Baron</h2>
-      <p id="overlaySub">Ride the hills, catch air off the ramp, don't faceplant. Hold GO to ride, hold REVERSE to back up — hold either in the air to tilt the bike.</p>
+      <p id="overlaySub">Ride the hills, catch air off the bumps, don't faceplant. Hold GO to ride, hold REVERSE to back up — hold either in the air to tilt the bike.</p>
+      <div id="skinPicker">
+        <div class="skinBtn" data-skin="sport">🏍️<span>Sport</span></div>
+        <div class="skinBtn" data-skin="scooter">🛵<span>Scooter</span></div>
+        <div class="skinBtn" data-skin="monster">🐉<span>Monster</span></div>
+        <div class="skinBtn" data-skin="f1">🏎️<span>F1</span></div>
+      </div>
       <button id="startBtn">Start riding</button>
     </div>
   </div>
@@ -133,7 +150,7 @@
       Constraint=Matter.Constraint, Events=Matter.Events, Runner=Matter.Runner;
 
   var canvas=document.getElementById('c'), ctx=canvas.getContext('2d'), stage=document.getElementById('stage');
-  var distStat=document.getElementById('distStat'), bestStat=document.getElementById('bestStat'), airStat=document.getElementById('airStat'), coinStat=document.getElementById('coinStat');
+  var distStat=document.getElementById('distStat'), bestStat=document.getElementById('bestStat'), airStat=document.getElementById('airStat'), coinStat=document.getElementById('coinStat'), levelStat=document.getElementById('levelStat');
   var overlay=document.getElementById('overlay'), overlayTitle=document.getElementById('overlayTitle'), overlaySub=document.getElementById('overlaySub');
   var startBtn=document.getElementById('startBtn');
 
@@ -150,41 +167,41 @@
   var engine=Engine.create();
   var world=engine.world;
 
-  var trackRuns=[], groundBodies=[], finishX=0;
-  var JUMP_START=2200, JUMP_END=2420, LAND_END=2720;
-  var JUMP2_START=4300, JUMP2_END=4460, JUMP2_LAND_END=4680;
+  var trackRuns=[], groundBodies=[], finishX=0, jumps=[];
+  var level=1, pendingLevelUp=false;
   var coins=[];
 
-  function genTrack(){
+  function inJumpGap(px,pad){
+    pad=pad||0;
+    for(var i=0;i<jumps.length;i++){
+      if(px>jumps[i].rampStart-pad && px<jumps[i].landEnd+pad) return true;
+    }
+    return false;
+  }
+
+  function genTrack(lvl){
+    if(groundBodies.length) World.remove(world,groundBodies);
+    trackRuns=[]; groundBodies=[]; coins=[]; jumps=[];
+
+    var totalLen=5200+(lvl-1)*1500;
+
+    // continuous rolling hills only — no gaps/cliffs, so there's nothing to fall into.
+    // difficulty ramps up with taller hills and bumpier rough patches instead.
     var step=34, baseY=420, x=-200, points=[];
-    while(x<6200){
-      var y=baseY+Math.sin(x/260)*55+Math.sin(x/95)*18;
-      if(x>3050 && x<3550){ y+=Math.sin((x-3050)/40)*14; } // rough patch for variety
-      if(x>JUMP_START-260 && x<=JUMP_START){
-        var t=(x-(JUMP_START-260))/260; y-=t*t*170;
-      } else if(x>JUMP_END && x<LAND_END){
-        var t2=(x-JUMP_END)/(LAND_END-JUMP_END); y=(baseY-170)*(1-t2)+baseY*t2+Math.sin(x/260)*20;
-      } else if(x>JUMP2_START-180 && x<=JUMP2_START){
-        var t3=(x-(JUMP2_START-180))/180; y-=t3*t3*110;
-      } else if(x>JUMP2_END && x<JUMP2_LAND_END){
-        var t4=(x-JUMP2_END)/(JUMP2_LAND_END-JUMP2_END); y=(baseY-110)*(1-t4)+baseY*t4+Math.sin(x/260)*20;
+    var hillAmp=55+Math.min((lvl-1)*7,70);
+    var roughAmp=18*(1+(lvl-1)*0.12);
+    var roughPatches=Math.min(lvl,3);
+    while(x<totalLen+600){
+      var y=baseY+Math.sin(x/260)*hillAmp+Math.sin(x/95)*roughAmp;
+      for(var rp=0;rp<roughPatches;rp++){
+        var rpx=1100+rp*1900;
+        if(x>rpx && x<rpx+460){ y+=Math.sin((x-rpx)/40)*14; }
       }
       points.push({x:x,y:y});
       x+=step;
     }
     finishX=points[points.length-1].x-300;
-
-    var run=[];
-    for(var i=0;i<points.length;i++){
-      var p=points[i];
-      if((p.x>JUMP_START && p.x<JUMP_END)||(p.x>JUMP2_START && p.x<JUMP2_END)){
-        if(run.length>1) trackRuns.push(run);
-        run=[];
-        continue;
-      }
-      run.push(p);
-    }
-    if(run.length>1) trackRuns.push(run);
+    trackRuns=[points];
 
     for(var r=0;r<trackRuns.length;r++){
       var pts=trackRuns[r];
@@ -197,9 +214,8 @@
     }
     World.add(world,groundBodies);
 
-    // coins: little arcs of coins scattered along the ride, skipping the jump gaps
+    // coins: little arcs of coins scattered along the ride
     for(var cx=200;cx<finishX-100;cx+=170){
-      if((cx>JUMP_START-60&&cx<LAND_END+60)||(cx>JUMP2_START-60&&cx<JUMP2_LAND_END+60)) continue;
       if(Math.random()<0.55){
         var arcN=2+Math.floor(Math.random()*3);
         for(var ai=0;ai<arcN;ai++){
@@ -208,7 +224,7 @@
       }
     }
   }
-  genTrack();
+  genTrack(level);
 
   function groundYAt(x){
     for(var r=0;r<trackRuns.length;r++){
@@ -322,9 +338,10 @@
     finished=true;
     stopEngineSound();
     playWin();
-    overlayTitle.textContent='Finish line!';
-    overlaySub.textContent='You made it \u2014 '+Math.floor(maxDist)+' m, '+coinCount+' coins. Ride again?';
-    startBtn.textContent='Ride again';
+    pendingLevelUp=true;
+    overlayTitle.textContent='Level '+level+' complete!';
+    overlaySub.textContent='You made it \u2014 '+Math.floor(maxDist)+' m, '+coinCount+' coins. Ready for level '+(level+1)+'?';
+    startBtn.textContent='Next level';
     overlay.classList.remove('hidden');
   }
 
@@ -403,11 +420,52 @@
 
   startBtn.addEventListener('click',function(){
     overlay.classList.add('hidden');
+    if(pendingLevelUp){
+      pendingLevelUp=false;
+      level++;
+      genTrack(level);
+      levelStat.textContent=level;
+    }
     resetBike();
   });
 
   var runner=Runner.create();
   Runner.run(runner,engine);
+
+  // ---- vehicle skin — player-selectable from the start screen ----
+  var BIKE_SKIN='sport';
+  var SKINS={
+    sport:{
+      frameTop:'#4a4f58',frameMid:'#22252b',frameBot:'#0e0f13',
+      accent:'#ffb400',fenderColor:'#1c1f26',knobby:false,rimColor:'#c9ccd1',
+      wheelScale:1,exhaustColor:'#8a8f96',bodyStyle:'sport'
+    },
+    scooter:{
+      frameTop:'#bfe6e8',frameMid:'#5fb3b8',frameBot:'#2c7478',
+      accent:'#e8f4f4',fenderColor:'#2c7478',knobby:false,rimColor:'#2a2e38',
+      wheelScale:0.85,exhaustColor:'#5a6070',bodyStyle:'scooter'
+    },
+    monster:{
+      frameTop:'#7fc85a',frameMid:'#4f9a3f',frameBot:'#2b5a1e',
+      accent:'#ffd75e',fenderColor:'#5a3a1f',knobby:true,rimColor:'#8a5a34',
+      wheelScale:1.55,exhaustColor:'#3a2a1a',bodyStyle:'monster'
+    },
+    f1:{
+      frameTop:'#3a6fe0',frameMid:'#1c3d94',frameBot:'#0d1f4a',
+      accent:'#ffcc00',fenderColor:'#0d1f4a',knobby:false,rimColor:'#1c1f26',
+      wheelScale:1.2,exhaustColor:'#4a4f58',bodyStyle:'f1'
+    }
+  };
+  function skin(){ return SKINS[BIKE_SKIN]||SKINS.sport; }
+
+  var skinBtns=document.querySelectorAll('.skinBtn');
+  skinBtns.forEach(function(btn){
+    if(btn.dataset.skin===BIKE_SKIN) btn.classList.add('selected');
+    btn.addEventListener('click',function(){
+      BIKE_SKIN=btn.dataset.skin;
+      skinBtns.forEach(function(b){b.classList.toggle('selected',b===btn);});
+    });
+  });
 
   var faceImg=new Image();
   var faceImgReady=false;
@@ -480,7 +538,7 @@
     ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.arc(handX,handY,3,0,Math.PI*2); ctx.fill();
 
     // head — just your custom face image, no helmet shell drawn behind it
-    var headX=shX-2, headY=shY-9, headR=16;
+    var headX=shX-2, headY=shY-9, headR=13;
     ctx.save();
     ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.clip();
     if(faceImgReady){
@@ -732,7 +790,7 @@
     // trackside bushes and rocks, sitting right on the ground — decorative only
     for(var bx=camX-150;bx<camX+W+150;bx+=140){
       var bseed=Math.abs(Math.sin(bx*0.041))%1;
-      if((bx>JUMP_START-80&&bx<LAND_END+80)||(bx>JUMP2_START-80&&bx<JUMP2_LAND_END+80)) continue;
+      if(inJumpGap(bx,80)) continue;
       var bgy=groundYAt(bx);
       if(bseed>0.5 && bseed<0.75){
         ctx.fillStyle='#4f9a3f';
@@ -834,65 +892,108 @@
       ctx.strokeStyle='#1c1f26'; ctx.lineWidth=1.4;
       ctx.beginPath(); ctx.moveTo(wA.position.x,wA.position.y); ctx.lineTo(c.position.x,c.position.y); ctx.lineTo(wB.position.x,wB.position.y); ctx.stroke();
 
+      var sk=skin();
+      var wr=17*sk.wheelScale, rimR=11*sk.wheelScale, hubR=3.4*sk.wheelScale;
+
       [wA,wB].forEach(function(w){
         ctx.save(); ctx.translate(w.position.x,w.position.y); ctx.rotate(w.angle);
-        ctx.beginPath(); ctx.arc(0,0,17,0,Math.PI*2); ctx.fillStyle='#17191f'; ctx.fill();
+        ctx.beginPath(); ctx.arc(0,0,wr,0,Math.PI*2); ctx.fillStyle='#17191f'; ctx.fill();
         ctx.strokeStyle='#000'; ctx.lineWidth=1; ctx.stroke();
-        // knobby tread
-        ctx.strokeStyle='#000'; ctx.lineWidth=2.4;
-        for(var kn=0;kn<10;kn++){
-          var ka=kn*(Math.PI/5);
-          ctx.beginPath(); ctx.moveTo(Math.cos(ka)*14.5,Math.sin(ka)*14.5); ctx.lineTo(Math.cos(ka)*17.5,Math.sin(ka)*17.5); ctx.stroke();
+        if(sk.knobby){
+          ctx.strokeStyle='#000'; ctx.lineWidth=2.6;
+          for(var kn=0;kn<10;kn++){
+            var ka=kn*(Math.PI/5);
+            ctx.beginPath(); ctx.moveTo(Math.cos(ka)*(wr-2.5),Math.sin(ka)*(wr-2.5)); ctx.lineTo(Math.cos(ka)*(wr+0.5),Math.sin(ka)*(wr+0.5)); ctx.stroke();
+          }
         }
-        // metallic rim
-        ctx.beginPath(); ctx.arc(0,0,11,0,Math.PI*2); ctx.fillStyle='#8a909c'; ctx.fill();
-        ctx.beginPath(); ctx.arc(0,0,11,0,Math.PI*2); ctx.strokeStyle='#5a6070'; ctx.lineWidth=1.4; ctx.stroke();
+        // rim
+        ctx.beginPath(); ctx.arc(0,0,rimR,0,Math.PI*2); ctx.fillStyle=sk.rimColor; ctx.fill();
+        ctx.beginPath(); ctx.arc(0,0,rimR,0,Math.PI*2); ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1.4; ctx.stroke();
         // spokes
-        ctx.strokeStyle='#3a4051'; ctx.lineWidth=2;
+        ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=2;
         ctx.beginPath();
-        ctx.moveTo(0,0); ctx.lineTo(10,0); ctx.moveTo(0,0); ctx.lineTo(-10,0);
-        ctx.moveTo(0,0); ctx.lineTo(0,10); ctx.moveTo(0,0); ctx.lineTo(0,-10);
-        ctx.moveTo(0,0); ctx.lineTo(7,7); ctx.moveTo(0,0); ctx.lineTo(-7,-7);
-        ctx.moveTo(0,0); ctx.lineTo(7,-7); ctx.moveTo(0,0); ctx.lineTo(-7,7);
+        ctx.moveTo(0,0); ctx.lineTo(rimR-1,0); ctx.moveTo(0,0); ctx.lineTo(-(rimR-1),0);
+        ctx.moveTo(0,0); ctx.lineTo(0,rimR-1); ctx.moveTo(0,0); ctx.lineTo(0,-(rimR-1));
+        ctx.moveTo(0,0); ctx.lineTo((rimR-1)*0.7,(rimR-1)*0.7); ctx.moveTo(0,0); ctx.lineTo(-(rimR-1)*0.7,-(rimR-1)*0.7);
+        ctx.moveTo(0,0); ctx.lineTo((rimR-1)*0.7,-(rimR-1)*0.7); ctx.moveTo(0,0); ctx.lineTo(-(rimR-1)*0.7,(rimR-1)*0.7);
         ctx.stroke();
         // hub
-        ctx.beginPath(); ctx.arc(0,0,3.4,0,Math.PI*2); ctx.fillStyle='#e0522a'; ctx.fill();
+        ctx.beginPath(); ctx.arc(0,0,hubR,0,Math.PI*2); ctx.fillStyle=sk.accent; ctx.fill();
         ctx.restore();
       });
 
-      // fenders — arcs over each wheel, motocross-style
-      [[wA,-1],[wB,1]].forEach(function(pair){
-        var w=pair[0];
-        ctx.save(); ctx.translate(w.position.x,w.position.y); ctx.rotate(c.angle);
-        ctx.strokeStyle='#a83a1c'; ctx.lineWidth=4; ctx.lineCap='round';
-        ctx.beginPath(); ctx.arc(0,-2,20,-2.6,-0.5); ctx.stroke();
-        ctx.restore();
-      });
+      // fenders — skipped on sport and f1 for an open/sleek look
+      if(sk.bodyStyle!=='sport' && sk.bodyStyle!=='f1'){
+        [wA,wB].forEach(function(w){
+          ctx.save(); ctx.translate(w.position.x,w.position.y); ctx.rotate(c.angle);
+          ctx.strokeStyle=sk.fenderColor; ctx.lineWidth=sk.bodyStyle==='monster'?6:4; ctx.lineCap='round';
+          ctx.beginPath(); ctx.arc(0,-2,wr+3,-2.6,-0.5); ctx.stroke();
+          ctx.restore();
+        });
+      }
 
       // exhaust pipe at the rear-underside of the chassis
       ctx.save(); ctx.translate(c.position.x,c.position.y); ctx.rotate(c.angle);
       ctx.fillStyle='#2a2e38'; ctx.fillRect(-46,4,12,7);
-      ctx.fillStyle='#565d6b'; ctx.fillRect(-48,5,4,5);
+      ctx.fillStyle=sk.exhaustColor; ctx.fillRect(-48,5,4,5);
       ctx.restore();
       if(!airborne && input.accel && Math.random()<0.35){
         var exX=c.position.x-Math.cos(c.angle)*46, exY=c.position.y+Math.sin(-c.angle)*4+8;
         spawnDust(exX,exY,1,'rgba(120,124,132,0.35)');
       }
 
-      // frame — metallic gradient body over the accent color
+      // frame — gradient body using the active skin's palette
       ctx.save(); ctx.translate(c.position.x,c.position.y); ctx.rotate(c.angle);
       var frameGrad=ctx.createLinearGradient(0,-11,0,11);
-      frameGrad.addColorStop(0,'#ff7a4d'); frameGrad.addColorStop(0.5,'#e0522a'); frameGrad.addColorStop(1,'#a83a1c');
+      frameGrad.addColorStop(0,sk.frameTop); frameGrad.addColorStop(0.5,sk.frameMid); frameGrad.addColorStop(1,sk.frameBot);
       ctx.fillStyle=frameGrad;
       ctx.beginPath();
       if(ctx.roundRect) ctx.roundRect(-39,-11,78,22,6); else ctx.rect(-39,-11,78,22);
       ctx.fill();
-      ctx.strokeStyle='#7a2a12'; ctx.lineWidth=1.6; ctx.stroke();
+      ctx.strokeStyle=sk.frameBot; ctx.lineWidth=1.6; ctx.stroke();
       ctx.fillStyle='rgba(255,255,255,0.25)';
       ctx.fillRect(-33,-8,50,3);
-      // handlebar
-      ctx.strokeStyle='#2a2e38'; ctx.lineWidth=3; ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(30,-10); ctx.lineTo(38,-20); ctx.stroke();
+
+      if(sk.bodyStyle==='sport'){
+        // aggressive fairing wedge at the front
+        ctx.fillStyle=sk.accent;
+        ctx.beginPath(); ctx.moveTo(39,-11); ctx.lineTo(50,-3); ctx.lineTo(39,4); ctx.closePath(); ctx.fill();
+      } else if(sk.bodyStyle==='scooter'){
+        // small windscreen
+        ctx.fillStyle='rgba(230,250,250,0.55)'; ctx.strokeStyle='#2c7478'; ctx.lineWidth=1.4;
+        ctx.beginPath(); ctx.moveTo(30,-11); ctx.lineTo(40,-24); ctx.lineTo(44,-22); ctx.lineTo(36,-9); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+      } else if(sk.bodyStyle==='monster'){
+        // cartoon dragon face plate on the front
+        ctx.save(); ctx.translate(40,-4);
+        ctx.fillStyle='#2b5a1e'; ctx.beginPath(); ctx.ellipse(0,0,9,10,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#ffd75e'; ctx.beginPath(); ctx.arc(-2,-3,2,0,Math.PI*2); ctx.arc(-2,3,2,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#1c1f26'; ctx.beginPath(); ctx.arc(-2,-3,0.8,0,Math.PI*2); ctx.arc(-2,3,0.8,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#fff'; ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.moveTo(2,-6); ctx.lineTo(5,-8); ctx.moveTo(2,6); ctx.lineTo(5,8); ctx.stroke();
+        ctx.restore();
+      } else if(sk.bodyStyle==='f1'){
+        // low nose cone with a thin front wing
+        ctx.fillStyle=sk.frameBot;
+        ctx.beginPath(); ctx.moveTo(39,-4); ctx.lineTo(58,1); ctx.lineTo(39,7); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle=sk.accent; ctx.lineWidth=2.4; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(50,4); ctx.lineTo(58,4); ctx.stroke();
+        // rear wing on end plates
+        ctx.strokeStyle=sk.frameBot; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(-39,-9); ctx.lineTo(-52,-20); ctx.moveTo(-39,3); ctx.lineTo(-52,-20); ctx.stroke();
+        ctx.fillStyle=sk.accent; ctx.fillRect(-56,-22,16,3.5);
+        // yellow racing stripe down the nose
+        ctx.fillStyle=sk.accent; ctx.fillRect(-10,-2,60,3);
+      }
+
+      // handlebar (F1 gets a small steering wheel instead)
+      if(sk.bodyStyle==='f1'){
+        ctx.strokeStyle='#1c1f26'; ctx.lineWidth=2.2;
+        ctx.beginPath(); ctx.arc(26,-13,4,0.3,Math.PI*1.8); ctx.stroke();
+      } else {
+        ctx.strokeStyle='#2a2e38'; ctx.lineWidth=3; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(30,-10); ctx.lineTo(38,-20); ctx.stroke();
+      }
       ctx.restore();
 
       drawRider(c.position.x,c.position.y,c.angle,speed);
