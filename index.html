@@ -479,22 +479,16 @@
     ctx.beginPath(); ctx.moveTo(shX,shY); ctx.lineTo(handX,handY); ctx.stroke();
     ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.arc(handX,handY,3,0,Math.PI*2); ctx.fill();
 
-    // helmet — colored shell with a visor band; the swappable face shows through the visor
-    var headX=shX-2, headY=shY-9, headR=5;
-    ctx.fillStyle='#e0522a'; ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.fill();
+    // head — just your custom face image, no helmet shell drawn behind it
+    var headX=shX-2, headY=shY-9, headR=13;
     ctx.save();
-    ctx.beginPath(); ctx.arc(headX,headY+1,headR-3.5,0,Math.PI*2); ctx.clip();
+    ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.clip();
     if(faceImgReady){
-      ctx.drawImage(faceImg,headX-(headR-3.5),headY+1-(headR-3.5),(headR-3.5)*2,(headR-3.5)*2);
+      ctx.drawImage(faceImg,headX-headR,headY-headR,headR*2,headR*2);
     } else {
       ctx.fillStyle='#f2c9a0'; ctx.fillRect(headX-headR,headY-headR,headR*2,headR*2);
     }
     ctx.restore();
-    ctx.strokeStyle='#a8391c'; ctx.lineWidth=1.6; ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.stroke();
-    // visor
-    ctx.fillStyle='rgba(70,150,220,0.55)';
-    ctx.beginPath(); ctx.ellipse(headX+5,headY+1,5.5,6.5,0,-1.3,1.3); ctx.fill();
-    ctx.strokeStyle='#2a2e38'; ctx.lineWidth=1.2; ctx.stroke();
 
     ctx.restore();
   }
