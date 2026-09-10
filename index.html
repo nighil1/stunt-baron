@@ -35,16 +35,29 @@
     box-shadow:0 2px 10px rgba(0,0,0,0.35);
   }
   #hud .title{font-size:15px;font-weight:700;letter-spacing:.5px;text-shadow:0 1px 0 rgba(0,0,0,0.4);}
-  #hud .stats{display:flex;gap:14px;font-size:12px;color:var(--text-dim);}
+  #hud .stats{display:flex;gap:8px;font-size:12px;color:var(--text-dim);flex-wrap:wrap;justify-content:flex-end;}
   #hud .stats .stat{
     display:flex;flex-direction:column;align-items:center;gap:1px;
     background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);
-    border-radius:8px;padding:3px 8px;min-width:44px;
+    border-radius:8px;padding:3px 6px;min-width:38px;
   }
   #hud .stats .stat span.lbl{font-size:9px;letter-spacing:.6px;color:var(--text-dim);}
   #hud .stats b{color:var(--text);font-weight:700;font-size:13px;}
   #stage{position:relative;flex:1;overflow:hidden;}
   canvas{display:block;width:100%;height:100%;}
+  #powerupHud{
+    position:absolute;top:56px;right:10px;z-index:4;
+    display:flex;flex-direction:column;gap:6px;pointer-events:none;
+  }
+  .puPill{
+    display:flex;align-items:center;gap:6px;
+    background:rgba(12,14,18,0.7);border:1px solid rgba(255,255,255,0.12);
+    border-radius:8px;padding:4px 8px;font-size:11px;font-weight:700;color:#fff;
+    min-width:86px;overflow:hidden;position:relative;
+  }
+  .puPill .puBar{
+    position:absolute;left:0;bottom:0;height:3px;background:currentColor;
+  }
   #hint{
     position:absolute;top:10px;left:50%;transform:translateX(-50%);
     max-width:88%;text-align:center;
@@ -73,6 +86,27 @@
   #overlay button{
     margin-top:6px;padding:10px 22px;border-radius:8px;border:none;
     background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
+  }
+  #leaderboardBtn{
+    margin-top:2px;background:rgba(255,255,255,0.08);border:1px solid #3a4051;
+    color:var(--text-dim);font-size:12.5px;padding:8px 18px;
+  }
+  #lbModal{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(6,7,10,0.85);z-index:20;
+  }
+  #lbModal.hidden{display:none;}
+  .lbPanel{
+    background:#1c1f26;border:1px solid #3a4051;border-radius:14px;
+    padding:18px 22px;min-width:220px;max-width:80vw;text-align:center;
+  }
+  .lbPanel h3{margin:0 0 10px;font-size:16px;}
+  .lbPanel ol{list-style:none;margin:0 0 14px;padding:0;text-align:left;max-height:40vh;overflow-y:auto;}
+  .lbPanel li{padding:5px 4px;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.06);}
+  .lbPanel li:first-child{color:#ffd75e;font-weight:700;}
+  .lbPanel button{
+    padding:8px 20px;border-radius:8px;border:none;background:var(--accent);
+    color:#fff;font-weight:600;cursor:pointer;
   }
   #controls{
     position:absolute;bottom:0;left:0;right:0;
@@ -113,6 +147,7 @@
     <div class="title">Stunt Baron</div>
     <div class="stats">
       <div class="stat">🎮<span class="lbl">LVL</span><b id="levelStat">1</b></div>
+      <div class="stat">⭐<span class="lbl">SCORE</span><b id="scoreStat">0</b></div>
       <div class="stat">🏁<span class="lbl">DIST</span><b id="distStat">0 m</b></div>
       <div class="stat">🏆<span class="lbl">BEST</span><b id="bestStat">0 m</b></div>
       <div class="stat">🪂<span class="lbl">AIR</span><b id="airStat">0</b></div>
@@ -122,6 +157,7 @@
   <div id="stage">
     <canvas id="c"></canvas>
     <div id="hint">Two pedals: hold RIGHT to ride, hold LEFT to reverse. Hold either in the air to tilt the bike!</div>
+    <div id="powerupHud"></div>
     <div id="controls">
       <div class="grp">
         <div class="pedal" id="reverse" aria-label="reverse">&#9664;<small>REVERSE</small></div>
@@ -140,6 +176,14 @@
         <div class="skinBtn" data-skin="f1">🏎️<span>F1</span></div>
       </div>
       <button id="startBtn">Start riding</button>
+      <button id="leaderboardBtn" type="button">🏆 Leaderboard</button>
+    </div>
+    <div id="lbModal" class="hidden">
+      <div class="lbPanel">
+        <h3>Top Scores</h3>
+        <ol id="lbList"></ol>
+        <button id="lbClose">Close</button>
+      </div>
     </div>
   </div>
 </div>
@@ -150,7 +194,21 @@
       Constraint=Matter.Constraint, Events=Matter.Events, Runner=Matter.Runner;
 
   var canvas=document.getElementById('c'), ctx=canvas.getContext('2d'), stage=document.getElementById('stage');
-  var distStat=document.getElementById('distStat'), bestStat=document.getElementById('bestStat'), airStat=document.getElementById('airStat'), coinStat=document.getElementById('coinStat'), levelStat=document.getElementById('levelStat');
+  var distStat=document.getElementById('distStat'), bestStat=document.getElementById('bestStat'), airStat=document.getElementById('airStat'), coinStat=document.getElementById('coinStat'), levelStat=document.getElementById('levelStat'), scoreStat=document.getElementById('scoreStat');
+  var powerupHudEl=document.getElementById('powerupHud');
+  function updatePowerupHud(){
+    var now=performance.now();
+    var html='';
+    ['boost','magnet','shield'].forEach(function(k){
+      if(pu[k]>now){
+        var frac=Math.max(0,(pu[k]-now)/PU_DUR[k]);
+        var meta=PU_META[k];
+        html+='<div class="puPill" style="color:'+meta.color+'">'+meta.icon+' '+meta.label+
+          '<div class="puBar" style="width:'+(frac*100)+'%"></div></div>';
+      }
+    });
+    powerupHudEl.innerHTML=html;
+  }
   var overlay=document.getElementById('overlay'), overlayTitle=document.getElementById('overlayTitle'), overlaySub=document.getElementById('overlaySub');
   var startBtn=document.getElementById('startBtn');
 
@@ -169,7 +227,14 @@
 
   var trackRuns=[], groundBodies=[], finishX=0, jumps=[];
   var level=1, pendingLevelUp=false;
-  var coins=[];
+  var coins=[], powerups=[];
+  var pu={boost:0,magnet:0,shield:0}; // each value is an end-timestamp (0 = inactive)
+  var PU_DUR={boost:4000,magnet:6000,shield:10000};
+  var PU_META={
+    boost:{icon:'⚡',label:'BOOST',color:'#ffcc00'},
+    magnet:{icon:'🧲',label:'MAGNET',color:'#4fc3f7'},
+    shield:{icon:'🛡️',label:'SHIELD',color:'#7fd8ff'}
+  };
 
   function inJumpGap(px,pad){
     pad=pad||0;
@@ -223,20 +288,28 @@
         }
       }
     }
+
+    // power-ups: one of each, spread evenly along the track
+    powerups=[];
+    var puTypes=['boost','magnet','shield'];
+    for(var pu=0;pu<puTypes.length;pu++){
+      var px=400+(finishX-800)*((pu+1)/(puTypes.length+1));
+      powerups.push({x:px,y:groundYAt(px)-55,type:puTypes[pu],taken:false});
+    }
   }
   genTrack(level);
 
+
   function groundYAt(x){
-    for(var r=0;r<trackRuns.length;r++){
-      var pts=trackRuns[r];
-      for(var i=0;i<pts.length-1;i++){
-        if(pts[i].x<=x && pts[i+1].x>=x){
-          var t=(x-pts[i].x)/((pts[i+1].x-pts[i].x)||1);
-          return pts[i].y+t*(pts[i+1].y-pts[i].y);
-        }
-      }
-    }
-    return 500;
+    var pts=trackRuns[0];
+    if(!pts||pts.length<2) return 500;
+    var step=pts[1].x-pts[0].x;
+    var idx=Math.floor((x-pts[0].x)/step);
+    if(idx<0) idx=0;
+    if(idx>=pts.length-1) idx=pts.length-2;
+    var a=pts[idx], b=pts[idx+1];
+    var t=(x-a.x)/((b.x-a.x)||1);
+    return a.y+t*(b.y-a.y);
   }
 
   var bike;
@@ -252,6 +325,35 @@
   }
 
   var crashed=false, finished=false, maxDist=0, best=0, airCount=0, coinCount=0;
+  var airCumRot=0, lastAirAngle=0;
+  var score=0, comboLevel=0, lastTrickTime=-99999;
+  var bestScore=0, leaderboard=[];
+  try{ bestScore=parseInt(localStorage.getItem('stuntBaronBestScore')||'0',10)||0; }catch(e){}
+  try{ leaderboard=JSON.parse(localStorage.getItem('stuntBaronLeaderboard')||'[]'); }catch(e){ leaderboard=[]; }
+
+  function saveRunResult(){
+    if(score<=0) return;
+    if(score>bestScore){
+      bestScore=score;
+      try{ localStorage.setItem('stuntBaronBestScore',String(bestScore)); }catch(e){}
+    }
+    leaderboard.push({score:score,date:new Date().toLocaleDateString()});
+    leaderboard.sort(function(a,b){return b.score-a.score;});
+    leaderboard=leaderboard.slice(0,10);
+    try{ localStorage.setItem('stuntBaronLeaderboard',JSON.stringify(leaderboard)); }catch(e){}
+  }
+
+  function awardTrick(now,name,basePoints,x,y){
+    if(now-lastTrickTime>2400) comboLevel=0;
+    var mult=Math.min(comboLevel+1,8);
+    var pts=basePoints*mult;
+    score+=pts; scoreStat.textContent=score;
+    comboLevel++; lastTrickTime=now;
+    var label=mult>1?(name+' \u00d7'+mult+'  +'+pts):(name+'  +'+pts);
+    spawnPopup(x,y,label,'#ff6fae');
+    spawnAura(x,y+20);
+    playTrick();
+  }
 
   var trailA=[], trailB=[];
   var groundContact={wA:false,wB:false};
@@ -284,26 +386,44 @@
     bike=makeBike(0,groundYAt(0)-40);
     crashed=false; finished=false; maxDist=0; airCount=0; coinCount=0;
     distStat.textContent='0 m'; airStat.textContent='0'; coinStat.textContent='0';
+    score=0; comboLevel=0; lastTrickTime=-99999; airCumRot=0; scoreStat.textContent='0';
     trailA=[]; trailB=[]; auras=[]; popups=[]; shake=0; dust=[]; sparkles=[];
     groundContact.wA=false; groundContact.wB=false; airborne=false;
     holdAccel=0; holdReverse=0;
     coins.forEach(function(c){c.taken=false;});
+    powerups.forEach(function(p){p.taken=false;});
+    pu.boost=0; pu.magnet=0; pu.shield=0;
+    updatePowerupHud();
     startEngineSound();
   }
 
   function spawnPopup(x,y,text,color){
     popups.push({x:x,y:y,text:text,life:0,maxLife:900,color:color||'#e0c064'});
   }
-  function spawnAura(x,y){
-    auras.push({x:x,y:y,r:6,life:0,maxLife:550});
+  function spawnAura(x,y,color1,color2){
+    auras.push({x:x,y:y,r:6,life:0,maxLife:550,c1:color1||'#e0c064',c2:color2||'#e0522a'});
   }
 
   Events.on(engine,'collisionStart',function(e){
     for(var k=0;k<e.pairs.length;k++){
       var pair=e.pairs[k];
       var labels=[pair.bodyA.label,pair.bodyB.label];
-      if(labels.indexOf('chassis')>-1 && labels.indexOf('ground')>-1 && !crashed && !finished){
-        crash();
+      if(labels.indexOf('chassis')>-1 && labels.indexOf('ground')>-1 && !crashed && !finished && bike){
+        var spd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
+        var upsideDown=Math.cos(bike.chassis.angle)<-0.25;
+        if(spd>3.6||upsideDown){
+          if(pu.shield>performance.now()){
+            pu.shield=0;
+            updatePowerupHud();
+            shake=Math.max(shake,10);
+            spawnAura(bike.chassis.position.x,bike.chassis.position.y,'#7fd8ff','#4fc3f7');
+            spawnPopup(bike.chassis.position.x,bike.chassis.position.y-46,'SHIELD BROKEN!','#7fd8ff');
+            Body.setVelocity(bike.chassis,{x:bike.chassis.velocity.x*0.3,y:bike.chassis.velocity.y*0.3});
+            Body.setAngularVelocity(bike.chassis,0);
+          } else {
+            crash();
+          }
+        }
       }
       if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
         var wheelBody=pair.bodyA.label==='wheel'?pair.bodyA:pair.bodyB;
@@ -329,8 +449,9 @@
     shake=18;
     stopEngineSound();
     playCrash();
+    saveRunResult();
     overlayTitle.textContent='Crashed!';
-    overlaySub.textContent='Distance: '+Math.floor(maxDist)+' m. Tap to try again.';
+    overlaySub.textContent='Distance: '+Math.floor(maxDist)+' m \u00b7 Score: '+score+'. Tap to try again.';
     startBtn.textContent='Try again';
     overlay.classList.remove('hidden');
   }
@@ -339,8 +460,9 @@
     stopEngineSound();
     playWin();
     pendingLevelUp=true;
+    saveRunResult();
     overlayTitle.textContent='Level '+level+' complete!';
-    overlaySub.textContent='You made it \u2014 '+Math.floor(maxDist)+' m, '+coinCount+' coins. Ready for level '+(level+1)+'?';
+    overlaySub.textContent='You made it \u2014 '+Math.floor(maxDist)+' m, '+coinCount+' coins, '+score+' pts. Ready for level '+(level+1)+'?';
     startBtn.textContent='Next level';
     overlay.classList.remove('hidden');
   }
@@ -379,17 +501,29 @@
   function playWin(){
     [523,659,784,1047].forEach(function(f,i){ setTimeout(function(){blip(f,0.22,'triangle',0.1);},i*110); });
   }
+  function playTrick(){
+    [700,1000].forEach(function(f,i){ setTimeout(function(){blip(f,0.14,'square',0.09);},i*55); });
+  }
   function startEngineSound(){
     var ac=ensureAudio(); if(!ac) return;
     stopEngineSound();
-    engineOsc=ac.createOscillator(); engineGain=ac.createGain();
-    engineOsc.type='sawtooth'; engineOsc.frequency.value=40;
-    engineGain.gain.value=0.03;
-    engineOsc.connect(engineGain); engineGain.connect(ac.destination);
-    engineOsc.start();
+    try{
+      engineOsc=ac.createOscillator(); engineGain=ac.createGain();
+      engineOsc.type='sawtooth'; engineOsc.frequency.value=40;
+      engineGain.gain.value=0.03;
+      engineOsc.connect(engineGain); engineGain.connect(ac.destination);
+      engineOsc.start();
+    }catch(e){ engineOsc=null; engineGain=null; }
   }
   function stopEngineSound(){
-    if(engineOsc){ try{engineOsc.stop();}catch(e){} engineOsc=null; }
+    if(engineOsc){
+      try{ engineOsc.stop(); engineOsc.disconnect(); }catch(e){}
+      engineOsc=null;
+    }
+    if(engineGain){
+      try{ engineGain.disconnect(); }catch(e){}
+      engineGain=null;
+    }
   }
   function updateEngineSound(wheelSpin){
     if(!engineOsc) return;
@@ -428,6 +562,25 @@
     }
     resetBike();
   });
+
+  var leaderboardBtn=document.getElementById('leaderboardBtn'), lbModal=document.getElementById('lbModal'),
+      lbList=document.getElementById('lbList'), lbClose=document.getElementById('lbClose');
+  function renderLeaderboard(){
+    lbList.innerHTML='';
+    if(leaderboard.length===0){
+      var li=document.createElement('li');
+      li.style.color='var(--text-dim)'; li.textContent='No runs yet \u2014 go set one!';
+      lbList.appendChild(li);
+      return;
+    }
+    leaderboard.forEach(function(entry,i){
+      var li=document.createElement('li');
+      li.textContent=(i+1)+'. '+entry.score+' pts \u2014 '+entry.date;
+      lbList.appendChild(li);
+    });
+  }
+  leaderboardBtn.addEventListener('click',function(){ renderLeaderboard(); lbModal.classList.remove('hidden'); });
+  lbClose.addEventListener('click',function(){ lbModal.classList.add('hidden'); });
 
   var runner=Runner.create();
   Runner.run(runner,engine);
@@ -478,11 +631,18 @@
   function applyControls(dt){
     if(crashed||finished||!bike) return;
 
+    var boostOn=pu.boost>performance.now();
+    var boostMult=boostOn?1.75:1;
+
     if(input.accel){
       // accel keeps driving the wheels even mid-air — that's normal engine behavior
       // and gives a natural kick when the tires bite back on landing
-      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+0.07,MAX_SPIN));
-      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+0.07,MAX_SPIN));
+      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+0.07*boostMult,MAX_SPIN*boostMult));
+      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+0.07*boostMult,MAX_SPIN*boostMult));
+      if(boostOn && !airborne && Math.random()<0.6){
+        var fx=bike.chassis.position.x-Math.cos(bike.chassis.angle)*46, fy=bike.chassis.position.y+8;
+        spawnDust(fx,fy,2,'rgba(255,150,40,0.55)');
+      }
     } else if(input.reverse && !airborne){
       // reverse only grips while grounded — applying it mid-air was causing an
       // unpredictable jolt the instant the wheels touched back down
@@ -538,7 +698,7 @@
     ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.arc(handX,handY,3,0,Math.PI*2); ctx.fill();
 
     // head — just your custom face image, no helmet shell drawn behind it
-    var headX=shX-2, headY=shY-9, headR=16;
+    var headX=shX-2, headY=shY-9, headR=13;
     ctx.save();
     ctx.beginPath(); ctx.arc(headX,headY,headR,0,Math.PI*2); ctx.clip();
     if(faceImgReady){
@@ -560,12 +720,19 @@
       var d=bike.chassis.position.x/12;
       if(d>maxDist){maxDist=d; distStat.textContent=Math.floor(maxDist)+' m';}
       if(maxDist>best){best=maxDist; bestStat.textContent=Math.floor(best)+' m';}
-      if(bike.chassis.position.y>1400) crash();
+      if(bike.chassis.position.y>groundYAt(bike.chassis.position.x)+620) crash();
       if(bike.chassis.position.x>finishX) win();
 
       var nowAirborne=!groundContact.wA && !groundContact.wB;
-      if(nowAirborne && !airborne){ airStartT=now; }
-      if(!nowAirborne && airborne){
+      if(nowAirborne){
+        if(!airborne){ airStartT=now; airCumRot=0; lastAirAngle=bike.chassis.angle; }
+        else {
+          var da=bike.chassis.angle-lastAirAngle;
+          while(da>Math.PI) da-=Math.PI*2;
+          while(da<-Math.PI) da+=Math.PI*2;
+          airCumRot+=da; lastAirAngle=bike.chassis.angle;
+        }
+      } else if(airborne){
         var airtime=now-airStartT;
         if(airtime>80) playLand();
         spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),9,'rgba(150,120,90,0.5)');
@@ -575,6 +742,12 @@
           spawnPopup(bike.chassis.position.x,bike.chassis.position.y-46,'+'+Math.floor(airtime)+'ms AIR!','#e0c064');
           shake=Math.max(shake,6);
         }
+        var flips=Math.abs(airCumRot)/(Math.PI*2);
+        var trickName=null, basePoints=0;
+        if(flips>=1.7){ trickName='DOUBLE FLIP'; basePoints=400; }
+        else if(flips>=0.8){ trickName=(airCumRot<0?'BACKFLIP':'FRONTFLIP'); basePoints=150; }
+        else if(airtime>280){ trickName='BIG AIR'; basePoints=50; }
+        if(trickName) awardTrick(now,trickName,basePoints,bike.chassis.position.x,bike.chassis.position.y-70);
       }
       airborne=nowAirborne;
 
@@ -584,16 +757,37 @@
         spawnDust(bike.wA.position.x,bike.wA.position.y+10,1,'rgba(150,120,90,0.4)');
       }
 
+      var magnetOn=pu.magnet>now;
       for(var ci=0;ci<coins.length;ci++){
         var co=coins[ci];
         if(co.taken) continue;
-        if(Math.hypot(co.x-bike.chassis.position.x,co.y-bike.chassis.position.y)<34){
+        var cdist=Math.hypot(co.x-bike.chassis.position.x,co.y-bike.chassis.position.y);
+        if(magnetOn && cdist<210 && cdist>=18){
+          co.x+=(bike.chassis.position.x-co.x)*0.18;
+          co.y+=(bike.chassis.position.y-co.y)*0.18;
+        }
+        if(cdist<34 || (magnetOn && cdist<18)){
           co.taken=true; coinCount++; coinStat.textContent=coinCount;
           playCoin();
           spawnPopup(co.x,co.y-10,'+1','#ffd75e');
           spawnSparkles(co.x,co.y);
         }
       }
+
+      for(var pi2=0;pi2<powerups.length;pi2++){
+        var p=powerups[pi2];
+        if(p.taken) continue;
+        if(Math.hypot(p.x-bike.chassis.position.x,p.y-bike.chassis.position.y)<32){
+          p.taken=true;
+          pu[p.type]=now+PU_DUR[p.type];
+          updatePowerupHud();
+          var meta=PU_META[p.type];
+          spawnPopup(p.x,p.y-10,meta.icon+' '+meta.label+'!',meta.color);
+          spawnSparkles(p.x,p.y);
+          playCoin();
+        }
+      }
+      updatePowerupHud();
 
       trailA.push({x:bike.wA.position.x,y:bike.wA.position.y,life:0});
       trailB.push({x:bike.wB.position.x,y:bike.wB.position.y,life:0});
@@ -845,6 +1039,21 @@
       ctx.restore();
     });
 
+    powerups.forEach(function(p){
+      if(p.taken) return;
+      if(p.x<camX-100||p.x>camX+W+100) return;
+      var bob=Math.sin(performance.now()/300+p.x)*4;
+      var meta=PU_META[p.type];
+      ctx.save();
+      ctx.translate(p.x,p.y+bob);
+      var glow=ctx.createRadialGradient(0,0,2,0,0,20);
+      glow.addColorStop(0,meta.color+'aa'); glow.addColorStop(1,meta.color+'00');
+      ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(0,0,20,0,Math.PI*2); ctx.fill();
+      ctx.font='20px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(meta.icon,0,1);
+      ctx.restore();
+    });
+
     // wheel light trails (drawn under everything else)
     function drawTrail(trail,hue1,hue2){
       if(trail.length<2) return;
@@ -997,6 +1206,19 @@
       ctx.restore();
 
       drawRider(c.position.x,c.position.y,c.angle,speed);
+
+      if(pu.shield>performance.now()){
+        var pulse=1+Math.sin(performance.now()/180)*0.04;
+        ctx.save();
+        ctx.globalCompositeOperation='lighter';
+        ctx.globalAlpha=0.35;
+        ctx.fillStyle='#7fd8ff';
+        ctx.beginPath(); ctx.arc(c.position.x,c.position.y-6,52*pulse,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=0.6;
+        ctx.strokeStyle='#bfeeff'; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(c.position.x,c.position.y-6,52*pulse,0,Math.PI*2); ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // landing auras — expanding gold ring bursts
@@ -1006,10 +1228,10 @@
       ctx.save();
       ctx.globalCompositeOperation='lighter';
       ctx.globalAlpha=(1-t)*0.85;
-      ctx.strokeStyle='#e0c064'; ctx.lineWidth=4-t*2.5;
+      ctx.strokeStyle=a.c1; ctx.lineWidth=4-t*2.5;
       ctx.beginPath(); ctx.arc(a.x,a.y,r,0,Math.PI*2); ctx.stroke();
       ctx.globalAlpha=(1-t)*0.35;
-      ctx.strokeStyle='#e0522a'; ctx.lineWidth=8;
+      ctx.strokeStyle=a.c2; ctx.lineWidth=8;
       ctx.beginPath(); ctx.arc(a.x,a.y,r*0.7,0,Math.PI*2); ctx.stroke();
       ctx.restore();
     });
