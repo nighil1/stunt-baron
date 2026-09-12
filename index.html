@@ -323,12 +323,8 @@
     var chassis=Bodies.rectangle(x,y,78,22,{collisionFilter:{group:group},density:0.0018*sk.weight,friction:0.3,chamfer:{radius:8},label:'chassis'});
     var wA=Bodies.circle(x-30,y+14,17,{collisionFilter:{group:group},friction:1*sk.grip,frictionStatic:2*sk.grip,density:0.02*sk.weight,label:'wheel'});
     var wB=Bodies.circle(x+30,y+14,17,{collisionFilter:{group:group},friction:1*sk.grip,frictionStatic:2*sk.grip,density:0.02*sk.weight,label:'wheel'});
-    // suspension stat softens/firms the axle constraints: higher suspension = more
-    // give (lower stiffness) and more damping, so heavy off-road vehicles absorb
-    // impacts while stiff ones (F1) stay twitchy and direct
-    var stiff=0.92-sk.suspension*0.12, damp=0.12+sk.suspension*0.12;
-    var axA=Constraint.create({bodyA:chassis,pointA:{x:-30,y:14},bodyB:wA,stiffness:stiff,length:0,damping:damp});
-    var axB=Constraint.create({bodyA:chassis,pointA:{x:30,y:14},bodyB:wB,stiffness:stiff,length:0,damping:damp});
+    var axA=Constraint.create({bodyA:chassis,pointA:{x:-30,y:14},bodyB:wA,stiffness:0.9,length:0,damping:0.15});
+    var axB=Constraint.create({bodyA:chassis,pointA:{x:30,y:14},bodyB:wB,stiffness:0.9,length:0,damping:0.15});
     World.add(world,[chassis,wA,wB,axA,axB]);
     return {chassis:chassis,wA:wA,wB:wB,axA:axA,axB:axB};
   }
@@ -437,11 +433,10 @@
     auras.push({x:x,y:y,r:6,life:0,maxLife:550,c1:color1||'#e0c064',c2:color2||'#e0522a'});
   }
 
-  // ground contact tracked via real collision detection (geometrically exact,
-  // unlike a simplified position check which breaks down on sloped terrain).
-  // This is safe now because physics is stepped synchronously inside frame()
-  // below, in the same call that reads groundContact right after — no
-  // cross-loop race is possible.
+  // ground contact is reset every physics tick and re-affirmed by collisionActive,
+  // rather than trusting only collisionStart/End — those can flicker (Matter.js
+  // sometimes briefly re-creates a resting contact pair, especially at low speed),
+  // and a flicker was being misread as "airborne", causing false Big Air triggers.
   Events.on(engine,'beforeUpdate',function(){
     groundContact.wA=false; groundContact.wB=false;
   });
@@ -465,8 +460,7 @@
       if(labels.indexOf('chassis')>-1 && labels.indexOf('ground')>-1 && !crashed && !finished && bike){
         var spd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
         var upsideDown=Math.cos(bike.chassis.angle)<-0.25;
-        var crashThreshold=3.6*(0.8+skin().weight*0.3);
-        if(spd>crashThreshold||upsideDown){
+        if(spd>3.6||upsideDown){
           if(pu.shield>performance.now()){
             pu.shield=0;
             updatePowerupHud();
@@ -645,12 +639,8 @@
   leaderboardBtn.addEventListener('click',function(){ renderLeaderboard(); lbModal.classList.remove('hidden'); });
   lbClose.addEventListener('click',function(){ lbModal.classList.add('hidden'); });
 
-  // Physics is stepped manually inside frame() below (see Engine.update call)
-  // instead of via Matter's Runner. Runner drives its own independent
-  // requestAnimationFrame loop, completely separate from our game loop — so
-  // collision state (ground contact) could be one loop out of sync with what
-  // frame() reads. Stepping manually, in the same call, makes it synchronous
-  // by construction: no race is possible.
+  var runner=Runner.create();
+  Runner.run(runner,engine);
 
   // ---- vehicle skin — player-selectable from the start screen ----
   var BIKE_SKIN='sport';
@@ -659,49 +649,43 @@
       frameTop:'#4a4f58',frameMid:'#22252b',frameBot:'#0e0f13',
       accent:'#ffb400',fenderColor:'#1c1f26',knobby:false,rimColor:'#c9ccd1',
       wheelScale:1,exhaustColor:'#8a8f96',bodyStyle:'sport',
-      accelMult:1.15,tiltMult:1.05,grip:0.95,weight:1.0,stability:0.6,
-      motorForce:0.082,maxSpeed:16,coastDecay:0.992,wheelieTendency:0.4,suspension:0.6,brakeForce:0.6,
+      accelMult:1.15,tiltMult:1.1,grip:0.9,weight:1.0,
       statLabel:'Balanced & quick'
     },
     scooter:{
       frameTop:'#bfe6e8',frameMid:'#5fb3b8',frameBot:'#2c7478',
       accent:'#e8f4f4',fenderColor:'#2c7478',knobby:false,rimColor:'#2a2e38',
       wheelScale:0.85,exhaustColor:'#5a6070',bodyStyle:'scooter',
-      accelMult:0.75,tiltMult:0.75,grip:1.05,weight:0.75,stability:0.8,
-      motorForce:0.055,maxSpeed:10,coastDecay:0.982,wheelieTendency:0.2,suspension:0.6,brakeForce:0.65,
-      statLabel:'Slow but forgiving'
+      accelMult:0.75,tiltMult:0.85,grip:1.0,weight:0.85,
+      statLabel:'Slow but nimble'
     },
     monster:{
       frameTop:'#7fc85a',frameMid:'#4f9a3f',frameBot:'#2b5a1e',
       accent:'#ffd75e',fenderColor:'#5a3a1f',knobby:true,rimColor:'#8a5a34',
       wheelScale:1.55,exhaustColor:'#3a2a1a',bodyStyle:'monster',
-      accelMult:0.95,tiltMult:0.45,grip:1.3,weight:1.35,stability:1.0,
-      motorForce:0.075,maxSpeed:12,coastDecay:0.993,wheelieTendency:0.5,suspension:1.0,brakeForce:0.5,
-      statLabel:'Heavy & planted'
+      accelMult:0.95,tiltMult:0.6,grip:1.3,weight:1.3,
+      statLabel:'Heavy, huge grip'
     },
     f1:{
       frameTop:'#3a6fe0',frameMid:'#1c3d94',frameBot:'#0d1f4a',
       accent:'#ffcc00',fenderColor:'#0d1f4a',knobby:false,rimColor:'#1c1f26',
       wheelScale:1.2,exhaustColor:'#4a4f58',bodyStyle:'f1',
-      accelMult:1.35,tiltMult:1.3,grip:0.65,weight:0.75,stability:0.4,
-      motorForce:0.10,maxSpeed:19,coastDecay:0.994,wheelieTendency:0.2,suspension:0.3,brakeForce:0.55,
+      accelMult:1.35,tiltMult:1.3,grip:0.6,weight:0.8,
       statLabel:'Fastest, twitchy'
     },
     chopper:{
       frameTop:'#e6c469',frameMid:'#b8902f',frameBot:'#5c4415',
       accent:'#c9c9d1',fenderColor:'#5c4415',knobby:false,rimColor:'#e6c469',
       wheelScale:1.1,exhaustColor:'#c9c9d1',bodyStyle:'chopper',
-      accelMult:0.9,tiltMult:0.45,grip:0.95,weight:1.25,stability:0.9,
-      motorForce:0.065,maxSpeed:14,coastDecay:0.995,wheelieTendency:0.7,suspension:0.7,brakeForce:0.5,
-      statLabel:'Long, heavy cruiser'
+      accelMult:0.9,tiltMult:0.55,grip:1.1,weight:1.15,
+      statLabel:'Torquey, stable air'
     },
     buggy:{
       frameTop:'#ff8a5c',frameMid:'#e0522a',frameBot:'#7a2a12',
       accent:'#2a2e38',fenderColor:'#2a2e38',knobby:true,rimColor:'#e6e6e6',
       wheelScale:1.3,exhaustColor:'#4a4f58',bodyStyle:'buggy',
-      accelMult:1.05,tiltMult:0.75,grip:1.25,weight:1.15,stability:0.9,
-      motorForce:0.075,maxSpeed:13,coastDecay:0.988,wheelieTendency:0.3,suspension:1.0,brakeForce:0.6,
-      statLabel:'Off-road, stable'
+      accelMult:1.05,tiltMult:0.9,grip:1.2,weight:1.1,
+      statLabel:'Balanced off-road'
     }
   };
   function skin(){ return SKINS[BIKE_SKIN]||SKINS.sport; }
@@ -734,102 +718,45 @@
     var boostMult=boostOn?1.75:1;
     var sk=skin();
     var accelMult=sk.accelMult*boostMult;
-    var maxSpin=MAX_SPIN*accelMult;
-    var chassisSpd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
-
-    // --- shared lightweight slip estimate (used by both the accel curve and
-    // the wheelie model below, so it's only computed once per frame) ---
-    // wheel surface speed vs actual chassis speed approximates how much the
-    // tires are spinning faster than the vehicle is actually moving. Grip
-    // scales how readily that turns into felt slip: high-grip vehicles
-    // (Monster/Buggy) convert torque into forward motion more efficiently;
-    // low-grip ones (F1) spin more under aggressive throttle.
-    var wheelSpinAvg=(Math.abs(bike.wA.angularVelocity)+Math.abs(bike.wB.angularVelocity))/2;
-    var wheelSurf=wheelSpinAvg*17;
-    var rawSlip=Math.max(0,Math.min((wheelSurf-chassisSpd)/(wheelSurf+4),1));
-    var slipRatio=Math.max(0,Math.min(rawSlip*(1.4-sk.grip),1));
-    var tractionFactor=Math.max(0.45,1-slipRatio*0.6);
 
     if(input.accel){
-      // effectiveMotor = motorForce * throttle * speedFalloff * tractionFactor
-      // — strongest at low speed, tapering smoothly toward max (never fully
-      // useless, never a hard wall), and reduced further by wheelspin
-      var speedRatio=Math.min(wheelSpinAvg/maxSpin,1);
-      var speedFalloff=1-0.55*speedRatio*speedRatio;
-      var inc=sk.motorForce*accelMult*speedFalloff*tractionFactor;
-      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+inc,maxSpin));
-      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+inc,maxSpin));
+      // accel keeps driving the wheels even mid-air — that's normal engine behavior
+      // and gives a natural kick when the tires bite back on landing
+      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+0.07*accelMult,MAX_SPIN*accelMult));
+      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+0.07*accelMult,MAX_SPIN*accelMult));
       if(boostOn && !airborne && Math.random()<0.6){
         var fx=bike.chassis.position.x-Math.cos(bike.chassis.angle)*46, fy=bike.chassis.position.y+8;
         spawnDust(fx,fy,2,'rgba(255,150,40,0.55)');
       }
     } else if(input.reverse && !airborne){
       // reverse only grips while grounded — applying it mid-air was causing an
-      // unpredictable jolt the instant the wheels touched back down. Weaker than
-      // forward accel, scaled by each vehicle's brakeForce.
-      var revInc=sk.motorForce*sk.brakeForce;
-      Body.setAngularVelocity(bike.wA,Math.max(bike.wA.angularVelocity-revInc,-maxSpin*0.7));
-      Body.setAngularVelocity(bike.wB,Math.max(bike.wB.angularVelocity-revInc,-maxSpin*0.7));
-    } else {
-      // coast down smoothly instead of leaving wheel spin purely to engine
-      // defaults — releasing the pedal shouldn't kill momentum instantly
-      Body.setAngularVelocity(bike.wA,bike.wA.angularVelocity*sk.coastDecay);
-      Body.setAngularVelocity(bike.wB,bike.wB.angularVelocity*sk.coastDecay);
-    }
-
-    // soft top-speed clamp, grounded only — boost temporarily raises it without
-    // permanently changing the vehicle, and it's a gentle scale-down rather than
-    // a hard cut so it doesn't feel like hitting a wall
-    if(!airborne){
-      var capSpeed=sk.maxSpeed*(boostOn?1.3:1);
-      if(chassisSpd>capSpeed){
-        var scale=1-Math.min((chassisSpd-capSpeed)/capSpeed,1)*0.15;
-        Body.setVelocity(bike.chassis,{x:bike.chassis.velocity.x*scale,y:bike.chassis.velocity.y*scale});
-      }
+      // unpredictable jolt the instant the wheels touched back down
+      Body.setAngularVelocity(bike.wA,Math.max(bike.wA.angularVelocity-0.09*sk.accelMult,-MAX_SPIN*0.7*sk.accelMult));
+      Body.setAngularVelocity(bike.wB,Math.max(bike.wB.angularVelocity-0.09*sk.accelMult,-MAX_SPIN*0.7*sk.accelMult));
     }
 
     if(input.accel){ holdAccel=Math.min(holdAccel+dt,700); holdReverse=0; }
     else if(input.reverse){ holdReverse=Math.min(holdReverse+dt,700); holdAccel=0; }
     else { holdAccel=Math.max(holdAccel-dt*2,0); holdReverse=Math.max(holdReverse-dt*2,0); }
 
+    // auto-tilt: only takes over while airborne, so ground handling stays natural
     if(airborne){
-      // air rotation is now true rotational ACCELERATION, not a target-angle
-      // command: GO/REVERSE nudge angular velocity each frame, release lets
-      // existing spin continue naturally, and opposite input progressively
-      // counters it — same feel family as flips/combos already relies on
-      var angAccel=0.0062*sk.tiltMult*(0.5+0.5*Math.min(holdAccel/400,1));
-      var angAccelRev=0.0062*sk.tiltMult*(0.5+0.5*Math.min(holdReverse/400,1));
+      var targetAV=0;
+      if(input.accel) targetAV=-(0.06+0.11*(holdAccel/700))*sk.tiltMult;
+      else if(input.reverse) targetAV=(0.06+0.11*(holdReverse/700))*sk.tiltMult;
       var av=bike.chassis.angularVelocity;
-      if(input.accel) av-=angAccel;
-      else if(input.reverse) av+=angAccelRev;
+      var blended=av+(targetAV-av)*0.28;
       var tiltCap=MAX_TILT_SPEED*sk.tiltMult;
-      av=Math.max(-tiltCap,Math.min(tiltCap,av));
-      Body.setAngularVelocity(bike.chassis,av);
+      blended=Math.max(-tiltCap,Math.min(tiltCap,blended));
+      Body.setAngularVelocity(bike.chassis,blended);
     } else {
-      // grounded wheelie: an emergent nudge from motor torque, speed, uphill
-      // slope, traction and vehicle weight/stability — not a commanded angle.
-      // Flat ground + normal accel keeps the front down; strong accel gradually
-      // lightens it; steep uphill makes it easier; wheelspin (low traction)
-      // reduces it instead of guaranteeing a lift; heavy/stable vehicles resist
-      // more. The existing bump-stabilizer still runs underneath, just eased
-      // proportionally while a real wheelie is building.
-      var wheelieForce=0;
-      if(input.accel && !input.reverse && chassisSpd>1.2){
-        var gripFactor=1-slipRatio;
-        var speedFactor=Math.min(chassisSpd/3.5,1);
-        var slope=-(groundYAt(bike.chassis.position.x+12)-groundYAt(bike.chassis.position.x-12))/24;
-        var uphillBoost=1+Math.max(slope,0)*4;
-        var stabilityResist=1/(0.5+sk.stability*0.9);
-        var rampfrac=Math.min(holdAccel/500,1);
-        wheelieForce=sk.wheelieTendency*gripFactor*speedFactor*uphillBoost*stabilityResist*(0.35+0.65*rampfrac);
-        wheelieForce=Math.min(wheelieForce,1.0);
-      }
-      var av2=bike.chassis.angularVelocity-0.0028*wheelieForce;
-      var dynamicCap=0.05+wheelieForce*0.065;
-      var dampFactor=0.82+Math.min(wheelieForce,1)*0.05;
-      av2*=dampFactor;
-      av2=Math.max(-dynamicCap,Math.min(dynamicCap,av2));
-      Body.setAngularVelocity(bike.chassis,av2);
+      // grounded stabilization: stronger damping + a hard clamp so hitting bumps
+      // at high speed doesn't fling the chassis into a spin. Doesn't touch wheel
+      // speed at all, so top speed is unaffected.
+      var dampedAV=bike.chassis.angularVelocity*0.82;
+      var GROUND_TILT_CAP=0.05;
+      dampedAV=Math.max(-GROUND_TILT_CAP,Math.min(GROUND_TILT_CAP,dampedAV));
+      Body.setAngularVelocity(bike.chassis,dampedAV);
     }
   }
 
@@ -883,7 +810,6 @@
     requestAnimationFrame(frame);
     var dt=Math.min(now-lastT,50); lastT=now;
     applyControls(dt);
-    Engine.update(engine,dt);
     if(bike && !crashed && !finished){
       var d=bike.chassis.position.x/12;
       if(d>maxDist){maxDist=d; distStat.textContent=Math.floor(maxDist)+' m';}
@@ -903,30 +829,8 @@
       } else if(airborne){
         var airtime=now-airStartT;
         var landSpd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
-        var landSk=skin();
-        var landAngle=((bike.chassis.angle%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;
-        var landAngleAbs=Math.abs(landAngle);
-        var landAngVel=Math.abs(bike.chassis.angularVelocity);
-
-        // landing response now depends on angle, vertical speed, spin, suspension
-        // and stability together, not just a flat suspension damp — smooth/good
-        // landings barely register, hard ones visibly compress and cost speed,
-        // bad-angle landings get genuinely unstable (but still only actually
-        // crash through the normal chassis-impact collision check, same as before)
-        var angleFactor=Math.min(landAngleAbs/0.7,1);
-        var badness=angleFactor*(1-landSk.stability*0.45);
-        var vertKeep=Math.max(0.35,(1-landSk.suspension*0.45)+badness*0.25);
-        var lateralKeep=1-badness*0.12;
-        Body.setVelocity(bike.chassis,{x:bike.chassis.velocity.x*lateralKeep,y:bike.chassis.velocity.y*vertKeep});
-        // stable vehicles self-correct some of their spin on touchdown; unstable
-        // ones (F1) keep more of it, making bad-angle landings feel sketchier
-        var avKeep=1-(0.45+landSk.stability*0.4);
-        Body.setAngularVelocity(bike.chassis,bike.chassis.angularVelocity*Math.max(avKeep,0.15));
-
         if(airtime>80) playLand(landSpd);
-        var hardLanding=landSpd>7||landAngleAbs>0.35;
-        spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),hardLanding?15:9,'rgba(150,120,90,0.5)',-Math.sign(bike.chassis.velocity.x||1)*1.8);
-        if(hardLanding) shake=Math.max(shake,4+badness*10);
+        spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),9,'rgba(150,120,90,0.5)',-Math.sign(bike.chassis.velocity.x||1)*1.8);
         if(airtime>280){
           airCount++; airStat.textContent=airCount;
           spawnAura(bike.chassis.position.x,bike.chassis.position.y+16);
@@ -940,8 +844,11 @@
         else if(airtime>280){ trickName='BIG AIR'; basePoints=50; }
         if(trickName) awardTrick(now,trickName,basePoints,bike.chassis.position.x,bike.chassis.position.y-70);
 
-        if(airtime>300 && landAngleAbs<0.18){
-          awardTrick(now,'PERFECT LANDING',80,bike.chassis.position.x,bike.chassis.position.y-88);
+        if(airtime>300){
+          var landAngle=((bike.chassis.angle%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;
+          if(Math.abs(landAngle)<0.18){
+            awardTrick(now,'PERFECT LANDING',80,bike.chassis.position.x,bike.chassis.position.y-88);
+          }
         }
       }
       airborne=nowAirborne;
