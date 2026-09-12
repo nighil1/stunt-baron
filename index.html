@@ -83,6 +83,7 @@
   .skinBtn span{font-size:10px;font-weight:700;color:var(--text-dim);letter-spacing:.4px;}
   .skinBtn.selected{border-color:var(--accent);background:rgba(224,82,42,0.18);transform:scale(1.05);}
   .skinBtn.selected span{color:#fff;}
+  #skinStat{font-size:11.5px;color:var(--text-dim);min-height:14px;margin-top:-2px;}
   #overlay button{
     margin-top:6px;padding:10px 22px;border-radius:8px;border:none;
     background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
@@ -174,7 +175,10 @@
         <div class="skinBtn" data-skin="scooter">🛵<span>Scooter</span></div>
         <div class="skinBtn" data-skin="monster">🐉<span>Monster</span></div>
         <div class="skinBtn" data-skin="f1">🏎️<span>F1</span></div>
+        <div class="skinBtn" data-skin="chopper">🏍️<span>Chopper</span></div>
+        <div class="skinBtn" data-skin="buggy">🏜️<span>Buggy</span></div>
       </div>
+      <div id="skinStat"></div>
       <button id="startBtn">Start riding</button>
       <button id="leaderboardBtn" type="button">🏆 Leaderboard</button>
     </div>
@@ -314,12 +318,17 @@
 
   var bike;
   function makeBike(x,y){
+    var sk=skin();
     var group=Body.nextGroup(true);
-    var chassis=Bodies.rectangle(x,y,78,22,{collisionFilter:{group:group},density:0.0018,friction:0.3,chamfer:{radius:8},label:'chassis'});
-    var wA=Bodies.circle(x-30,y+14,17,{collisionFilter:{group:group},friction:1,frictionStatic:2,density:0.02,label:'wheel'});
-    var wB=Bodies.circle(x+30,y+14,17,{collisionFilter:{group:group},friction:1,frictionStatic:2,density:0.02,label:'wheel'});
-    var axA=Constraint.create({bodyA:chassis,pointA:{x:-30,y:14},bodyB:wA,stiffness:0.9,length:0,damping:0.15});
-    var axB=Constraint.create({bodyA:chassis,pointA:{x:30,y:14},bodyB:wB,stiffness:0.9,length:0,damping:0.15});
+    var chassis=Bodies.rectangle(x,y,78,22,{collisionFilter:{group:group},density:0.0018*sk.weight,friction:0.3,chamfer:{radius:8},label:'chassis'});
+    var wA=Bodies.circle(x-30,y+14,17,{collisionFilter:{group:group},friction:1*sk.grip,frictionStatic:2*sk.grip,density:0.02*sk.weight,label:'wheel'});
+    var wB=Bodies.circle(x+30,y+14,17,{collisionFilter:{group:group},friction:1*sk.grip,frictionStatic:2*sk.grip,density:0.02*sk.weight,label:'wheel'});
+    // suspension stat softens/firms the axle constraints: higher suspension = more
+    // give (lower stiffness) and more damping, so heavy off-road vehicles absorb
+    // impacts while stiff ones (F1) stay twitchy and direct
+    var stiff=0.92-sk.suspension*0.12, damp=0.12+sk.suspension*0.12;
+    var axA=Constraint.create({bodyA:chassis,pointA:{x:-30,y:14},bodyB:wA,stiffness:stiff,length:0,damping:damp});
+    var axB=Constraint.create({bodyA:chassis,pointA:{x:30,y:14},bodyB:wB,stiffness:stiff,length:0,damping:damp});
     World.add(world,[chassis,wA,wB,axA,axB]);
     return {chassis:chassis,wA:wA,wB:wB,axA:axA,axB:axB};
   }
@@ -365,11 +374,12 @@
   var dust=[]; // {x,y,vx,vy,life,maxLife,r,color}
   var sparkles=[]; // {x,y,vx,vy,life,maxLife}
 
-  function spawnDust(x,y,n,color){
+  function spawnDust(x,y,n,color,dirBias){
+    dirBias=dirBias||0;
     for(var i=0;i<n;i++){
       dust.push({
         x:x+(Math.random()-0.5)*10, y:y+(Math.random()-0.5)*6,
-        vx:(Math.random()-0.5)*1.4, vy:-Math.random()*1.2-0.3,
+        vx:(Math.random()-0.5)*1.4+dirBias, vy:-Math.random()*1.2-0.3,
         life:0, maxLife:400+Math.random()*260, r:3+Math.random()*3,
         color:color||'rgba(150,120,90,0.55)'
       });
@@ -427,6 +437,27 @@
     auras.push({x:x,y:y,r:6,life:0,maxLife:550,c1:color1||'#e0c064',c2:color2||'#e0522a'});
   }
 
+  // ground contact tracked via real collision detection (geometrically exact,
+  // unlike a simplified position check which breaks down on sloped terrain).
+  // This is safe now because physics is stepped synchronously inside frame()
+  // below, in the same call that reads groundContact right after — no
+  // cross-loop race is possible.
+  Events.on(engine,'beforeUpdate',function(){
+    groundContact.wA=false; groundContact.wB=false;
+  });
+  function markWheelContact(e){
+    for(var k=0;k<e.pairs.length;k++){
+      var pair=e.pairs[k];
+      var labels=[pair.bodyA.label,pair.bodyB.label];
+      if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
+        var wheelBody=pair.bodyA.label==='wheel'?pair.bodyA:pair.bodyB;
+        if(bike && wheelBody===bike.wA) groundContact.wA=true;
+        if(bike && wheelBody===bike.wB) groundContact.wB=true;
+      }
+    }
+  }
+  Events.on(engine,'collisionActive',markWheelContact);
+
   Events.on(engine,'collisionStart',function(e){
     for(var k=0;k<e.pairs.length;k++){
       var pair=e.pairs[k];
@@ -434,7 +465,8 @@
       if(labels.indexOf('chassis')>-1 && labels.indexOf('ground')>-1 && !crashed && !finished && bike){
         var spd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
         var upsideDown=Math.cos(bike.chassis.angle)<-0.25;
-        if(spd>3.6||upsideDown){
+        var crashThreshold=3.6*(0.8+skin().weight*0.3);
+        if(spd>crashThreshold||upsideDown){
           if(pu.shield>performance.now()){
             pu.shield=0;
             updatePowerupHud();
@@ -448,23 +480,8 @@
           }
         }
       }
-      if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
-        var wheelBody=pair.bodyA.label==='wheel'?pair.bodyA:pair.bodyB;
-        if(bike && wheelBody===bike.wA) groundContact.wA=true;
-        if(bike && wheelBody===bike.wB) groundContact.wB=true;
-      }
     }
-  });
-  Events.on(engine,'collisionEnd',function(e){
-    for(var k=0;k<e.pairs.length;k++){
-      var pair=e.pairs[k];
-      var labels=[pair.bodyA.label,pair.bodyB.label];
-      if(labels.indexOf('wheel')>-1 && labels.indexOf('ground')>-1){
-        var wheelBody=pair.bodyA.label==='wheel'?pair.bodyA:pair.bodyB;
-        if(bike && wheelBody===bike.wA) groundContact.wA=false;
-        if(bike && wheelBody===bike.wB) groundContact.wB=false;
-      }
-    }
+    markWheelContact(e);
   });
 
   function crash(){
@@ -628,8 +645,12 @@
   leaderboardBtn.addEventListener('click',function(){ renderLeaderboard(); lbModal.classList.remove('hidden'); });
   lbClose.addEventListener('click',function(){ lbModal.classList.add('hidden'); });
 
-  var runner=Runner.create();
-  Runner.run(runner,engine);
+  // Physics is stepped manually inside frame() below (see Engine.update call)
+  // instead of via Matter's Runner. Runner drives its own independent
+  // requestAnimationFrame loop, completely separate from our game loop — so
+  // collision state (ground contact) could be one loop out of sync with what
+  // frame() reads. Stepping manually, in the same call, makes it synchronous
+  // by construction: no race is possible.
 
   // ---- vehicle skin — player-selectable from the start screen ----
   var BIKE_SKIN='sport';
@@ -637,34 +658,66 @@
     sport:{
       frameTop:'#4a4f58',frameMid:'#22252b',frameBot:'#0e0f13',
       accent:'#ffb400',fenderColor:'#1c1f26',knobby:false,rimColor:'#c9ccd1',
-      wheelScale:1,exhaustColor:'#8a8f96',bodyStyle:'sport'
+      wheelScale:1,exhaustColor:'#8a8f96',bodyStyle:'sport',
+      accelMult:1.15,tiltMult:1.05,grip:0.95,weight:1.0,stability:0.6,
+      motorForce:0.082,maxSpeed:16,coastDecay:0.992,wheelieTendency:0.4,suspension:0.6,brakeForce:0.6,
+      statLabel:'Balanced & quick'
     },
     scooter:{
       frameTop:'#bfe6e8',frameMid:'#5fb3b8',frameBot:'#2c7478',
       accent:'#e8f4f4',fenderColor:'#2c7478',knobby:false,rimColor:'#2a2e38',
-      wheelScale:0.85,exhaustColor:'#5a6070',bodyStyle:'scooter'
+      wheelScale:0.85,exhaustColor:'#5a6070',bodyStyle:'scooter',
+      accelMult:0.75,tiltMult:0.75,grip:1.05,weight:0.75,stability:0.8,
+      motorForce:0.055,maxSpeed:10,coastDecay:0.982,wheelieTendency:0.2,suspension:0.6,brakeForce:0.65,
+      statLabel:'Slow but forgiving'
     },
     monster:{
       frameTop:'#7fc85a',frameMid:'#4f9a3f',frameBot:'#2b5a1e',
       accent:'#ffd75e',fenderColor:'#5a3a1f',knobby:true,rimColor:'#8a5a34',
-      wheelScale:1.55,exhaustColor:'#3a2a1a',bodyStyle:'monster'
+      wheelScale:1.55,exhaustColor:'#3a2a1a',bodyStyle:'monster',
+      accelMult:0.95,tiltMult:0.45,grip:1.3,weight:1.35,stability:1.0,
+      motorForce:0.075,maxSpeed:12,coastDecay:0.993,wheelieTendency:0.5,suspension:1.0,brakeForce:0.5,
+      statLabel:'Heavy & planted'
     },
     f1:{
       frameTop:'#3a6fe0',frameMid:'#1c3d94',frameBot:'#0d1f4a',
       accent:'#ffcc00',fenderColor:'#0d1f4a',knobby:false,rimColor:'#1c1f26',
-      wheelScale:1.2,exhaustColor:'#4a4f58',bodyStyle:'f1'
+      wheelScale:1.2,exhaustColor:'#4a4f58',bodyStyle:'f1',
+      accelMult:1.35,tiltMult:1.3,grip:0.65,weight:0.75,stability:0.4,
+      motorForce:0.10,maxSpeed:19,coastDecay:0.994,wheelieTendency:0.2,suspension:0.3,brakeForce:0.55,
+      statLabel:'Fastest, twitchy'
+    },
+    chopper:{
+      frameTop:'#e6c469',frameMid:'#b8902f',frameBot:'#5c4415',
+      accent:'#c9c9d1',fenderColor:'#5c4415',knobby:false,rimColor:'#e6c469',
+      wheelScale:1.1,exhaustColor:'#c9c9d1',bodyStyle:'chopper',
+      accelMult:0.9,tiltMult:0.45,grip:0.95,weight:1.25,stability:0.9,
+      motorForce:0.065,maxSpeed:14,coastDecay:0.995,wheelieTendency:0.7,suspension:0.7,brakeForce:0.5,
+      statLabel:'Long, heavy cruiser'
+    },
+    buggy:{
+      frameTop:'#ff8a5c',frameMid:'#e0522a',frameBot:'#7a2a12',
+      accent:'#2a2e38',fenderColor:'#2a2e38',knobby:true,rimColor:'#e6e6e6',
+      wheelScale:1.3,exhaustColor:'#4a4f58',bodyStyle:'buggy',
+      accelMult:1.05,tiltMult:0.75,grip:1.25,weight:1.15,stability:0.9,
+      motorForce:0.075,maxSpeed:13,coastDecay:0.988,wheelieTendency:0.3,suspension:1.0,brakeForce:0.6,
+      statLabel:'Off-road, stable'
     }
   };
   function skin(){ return SKINS[BIKE_SKIN]||SKINS.sport; }
 
   var skinBtns=document.querySelectorAll('.skinBtn');
+  var skinStatEl=document.getElementById('skinStat');
+  function updateSkinStat(){ skinStatEl.textContent=skin().statLabel; }
   skinBtns.forEach(function(btn){
     if(btn.dataset.skin===BIKE_SKIN) btn.classList.add('selected');
     btn.addEventListener('click',function(){
       BIKE_SKIN=btn.dataset.skin;
       skinBtns.forEach(function(b){b.classList.toggle('selected',b===btn);});
+      updateSkinStat();
     });
   });
+  updateSkinStat();
 
   var faceImg=new Image();
   var faceImgReady=false;
@@ -679,44 +732,104 @@
 
     var boostOn=pu.boost>performance.now();
     var boostMult=boostOn?1.75:1;
+    var sk=skin();
+    var accelMult=sk.accelMult*boostMult;
+    var maxSpin=MAX_SPIN*accelMult;
+    var chassisSpd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
+
+    // --- shared lightweight slip estimate (used by both the accel curve and
+    // the wheelie model below, so it's only computed once per frame) ---
+    // wheel surface speed vs actual chassis speed approximates how much the
+    // tires are spinning faster than the vehicle is actually moving. Grip
+    // scales how readily that turns into felt slip: high-grip vehicles
+    // (Monster/Buggy) convert torque into forward motion more efficiently;
+    // low-grip ones (F1) spin more under aggressive throttle.
+    var wheelSpinAvg=(Math.abs(bike.wA.angularVelocity)+Math.abs(bike.wB.angularVelocity))/2;
+    var wheelSurf=wheelSpinAvg*17;
+    var rawSlip=Math.max(0,Math.min((wheelSurf-chassisSpd)/(wheelSurf+4),1));
+    var slipRatio=Math.max(0,Math.min(rawSlip*(1.4-sk.grip),1));
+    var tractionFactor=Math.max(0.45,1-slipRatio*0.6);
 
     if(input.accel){
-      // accel keeps driving the wheels even mid-air — that's normal engine behavior
-      // and gives a natural kick when the tires bite back on landing
-      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+0.07*boostMult,MAX_SPIN*boostMult));
-      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+0.07*boostMult,MAX_SPIN*boostMult));
+      // effectiveMotor = motorForce * throttle * speedFalloff * tractionFactor
+      // — strongest at low speed, tapering smoothly toward max (never fully
+      // useless, never a hard wall), and reduced further by wheelspin
+      var speedRatio=Math.min(wheelSpinAvg/maxSpin,1);
+      var speedFalloff=1-0.55*speedRatio*speedRatio;
+      var inc=sk.motorForce*accelMult*speedFalloff*tractionFactor;
+      Body.setAngularVelocity(bike.wA,Math.min(bike.wA.angularVelocity+inc,maxSpin));
+      Body.setAngularVelocity(bike.wB,Math.min(bike.wB.angularVelocity+inc,maxSpin));
       if(boostOn && !airborne && Math.random()<0.6){
         var fx=bike.chassis.position.x-Math.cos(bike.chassis.angle)*46, fy=bike.chassis.position.y+8;
         spawnDust(fx,fy,2,'rgba(255,150,40,0.55)');
       }
     } else if(input.reverse && !airborne){
       // reverse only grips while grounded — applying it mid-air was causing an
-      // unpredictable jolt the instant the wheels touched back down
-      Body.setAngularVelocity(bike.wA,Math.max(bike.wA.angularVelocity-0.09,-MAX_SPIN*0.7));
-      Body.setAngularVelocity(bike.wB,Math.max(bike.wB.angularVelocity-0.09,-MAX_SPIN*0.7));
+      // unpredictable jolt the instant the wheels touched back down. Weaker than
+      // forward accel, scaled by each vehicle's brakeForce.
+      var revInc=sk.motorForce*sk.brakeForce;
+      Body.setAngularVelocity(bike.wA,Math.max(bike.wA.angularVelocity-revInc,-maxSpin*0.7));
+      Body.setAngularVelocity(bike.wB,Math.max(bike.wB.angularVelocity-revInc,-maxSpin*0.7));
+    } else {
+      // coast down smoothly instead of leaving wheel spin purely to engine
+      // defaults — releasing the pedal shouldn't kill momentum instantly
+      Body.setAngularVelocity(bike.wA,bike.wA.angularVelocity*sk.coastDecay);
+      Body.setAngularVelocity(bike.wB,bike.wB.angularVelocity*sk.coastDecay);
+    }
+
+    // soft top-speed clamp, grounded only — boost temporarily raises it without
+    // permanently changing the vehicle, and it's a gentle scale-down rather than
+    // a hard cut so it doesn't feel like hitting a wall
+    if(!airborne){
+      var capSpeed=sk.maxSpeed*(boostOn?1.3:1);
+      if(chassisSpd>capSpeed){
+        var scale=1-Math.min((chassisSpd-capSpeed)/capSpeed,1)*0.15;
+        Body.setVelocity(bike.chassis,{x:bike.chassis.velocity.x*scale,y:bike.chassis.velocity.y*scale});
+      }
     }
 
     if(input.accel){ holdAccel=Math.min(holdAccel+dt,700); holdReverse=0; }
     else if(input.reverse){ holdReverse=Math.min(holdReverse+dt,700); holdAccel=0; }
     else { holdAccel=Math.max(holdAccel-dt*2,0); holdReverse=Math.max(holdReverse-dt*2,0); }
 
-    // auto-tilt: only takes over while airborne, so ground handling stays natural
     if(airborne){
-      var targetAV=0;
-      if(input.accel) targetAV=-(0.06+0.11*(holdAccel/700));
-      else if(input.reverse) targetAV=(0.06+0.11*(holdReverse/700));
+      // air rotation is now true rotational ACCELERATION, not a target-angle
+      // command: GO/REVERSE nudge angular velocity each frame, release lets
+      // existing spin continue naturally, and opposite input progressively
+      // counters it — same feel family as flips/combos already relies on
+      var angAccel=0.0062*sk.tiltMult*(0.5+0.5*Math.min(holdAccel/400,1));
+      var angAccelRev=0.0062*sk.tiltMult*(0.5+0.5*Math.min(holdReverse/400,1));
       var av=bike.chassis.angularVelocity;
-      var blended=av+(targetAV-av)*0.28;
-      blended=Math.max(-MAX_TILT_SPEED,Math.min(MAX_TILT_SPEED,blended));
-      Body.setAngularVelocity(bike.chassis,blended);
+      if(input.accel) av-=angAccel;
+      else if(input.reverse) av+=angAccelRev;
+      var tiltCap=MAX_TILT_SPEED*sk.tiltMult;
+      av=Math.max(-tiltCap,Math.min(tiltCap,av));
+      Body.setAngularVelocity(bike.chassis,av);
     } else {
-      // grounded stabilization: stronger damping + a hard clamp so hitting bumps
-      // at high speed doesn't fling the chassis into a spin. Doesn't touch wheel
-      // speed at all, so top speed is unaffected.
-      var dampedAV=bike.chassis.angularVelocity*0.82;
-      var GROUND_TILT_CAP=0.05;
-      dampedAV=Math.max(-GROUND_TILT_CAP,Math.min(GROUND_TILT_CAP,dampedAV));
-      Body.setAngularVelocity(bike.chassis,dampedAV);
+      // grounded wheelie: an emergent nudge from motor torque, speed, uphill
+      // slope, traction and vehicle weight/stability — not a commanded angle.
+      // Flat ground + normal accel keeps the front down; strong accel gradually
+      // lightens it; steep uphill makes it easier; wheelspin (low traction)
+      // reduces it instead of guaranteeing a lift; heavy/stable vehicles resist
+      // more. The existing bump-stabilizer still runs underneath, just eased
+      // proportionally while a real wheelie is building.
+      var wheelieForce=0;
+      if(input.accel && !input.reverse && chassisSpd>1.2){
+        var gripFactor=1-slipRatio;
+        var speedFactor=Math.min(chassisSpd/3.5,1);
+        var slope=-(groundYAt(bike.chassis.position.x+12)-groundYAt(bike.chassis.position.x-12))/24;
+        var uphillBoost=1+Math.max(slope,0)*4;
+        var stabilityResist=1/(0.5+sk.stability*0.9);
+        var rampfrac=Math.min(holdAccel/500,1);
+        wheelieForce=sk.wheelieTendency*gripFactor*speedFactor*uphillBoost*stabilityResist*(0.35+0.65*rampfrac);
+        wheelieForce=Math.min(wheelieForce,1.0);
+      }
+      var av2=bike.chassis.angularVelocity-0.0028*wheelieForce;
+      var dynamicCap=0.05+wheelieForce*0.065;
+      var dampFactor=0.82+Math.min(wheelieForce,1)*0.05;
+      av2*=dampFactor;
+      av2=Math.max(-dynamicCap,Math.min(dynamicCap,av2));
+      Body.setAngularVelocity(bike.chassis,av2);
     }
   }
 
@@ -729,6 +842,9 @@
     var kneeX=-8-air*3, kneeY=-2, footX=-14-air*8, footY=8+air*2;
     ctx.beginPath(); ctx.moveTo(-4,-9); ctx.lineTo(kneeX,kneeY); ctx.lineTo(footX,footY); ctx.stroke();
     ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.ellipse(footX,footY,4.2,3,0.3,0,Math.PI*2); ctx.fill();
+    // knee guard
+    ctx.fillStyle='#e0522a'; ctx.beginPath(); ctx.ellipse(kneeX,kneeY,3.2,3.6,0.3,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#a8391c'; ctx.lineWidth=0.8; ctx.stroke();
 
     // torso — leaned forward in a racing crouch, orange jacket stripe over black
     var shX=6-air*2, shY=-27-air*2;
@@ -739,9 +855,14 @@
 
     // arm reaching to the handlebar
     var handX=24, handY=-13;
+    var elbowX=(shX+handX)/2+2, elbowY=(shY+handY)/2-2;
     ctx.strokeStyle='#181a1f'; ctx.lineWidth=5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(shX,shY); ctx.lineTo(handX,handY); ctx.stroke();
-    ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.arc(handX,handY,3,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(shX,shY); ctx.lineTo(elbowX,elbowY); ctx.lineTo(handX,handY); ctx.stroke();
+    // elbow pad
+    ctx.fillStyle='#e0522a'; ctx.beginPath(); ctx.ellipse(elbowX,elbowY,2.6,2.6,0,0,Math.PI*2); ctx.fill();
+    // glove
+    ctx.fillStyle='#0e0f13'; ctx.beginPath(); ctx.arc(handX,handY,3.4,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#3a3f47'; ctx.lineWidth=0.8; ctx.beginPath(); ctx.arc(handX,handY,3.4,0,Math.PI*2); ctx.stroke();
 
     // head — just your custom face image, no helmet shell drawn behind it
     var headX=shX-2, headY=shY-9, headR=16;
@@ -762,6 +883,7 @@
     requestAnimationFrame(frame);
     var dt=Math.min(now-lastT,50); lastT=now;
     applyControls(dt);
+    Engine.update(engine,dt);
     if(bike && !crashed && !finished){
       var d=bike.chassis.position.x/12;
       if(d>maxDist){maxDist=d; distStat.textContent=Math.floor(maxDist)+' m';}
@@ -781,8 +903,30 @@
       } else if(airborne){
         var airtime=now-airStartT;
         var landSpd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
+        var landSk=skin();
+        var landAngle=((bike.chassis.angle%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;
+        var landAngleAbs=Math.abs(landAngle);
+        var landAngVel=Math.abs(bike.chassis.angularVelocity);
+
+        // landing response now depends on angle, vertical speed, spin, suspension
+        // and stability together, not just a flat suspension damp — smooth/good
+        // landings barely register, hard ones visibly compress and cost speed,
+        // bad-angle landings get genuinely unstable (but still only actually
+        // crash through the normal chassis-impact collision check, same as before)
+        var angleFactor=Math.min(landAngleAbs/0.7,1);
+        var badness=angleFactor*(1-landSk.stability*0.45);
+        var vertKeep=Math.max(0.35,(1-landSk.suspension*0.45)+badness*0.25);
+        var lateralKeep=1-badness*0.12;
+        Body.setVelocity(bike.chassis,{x:bike.chassis.velocity.x*lateralKeep,y:bike.chassis.velocity.y*vertKeep});
+        // stable vehicles self-correct some of their spin on touchdown; unstable
+        // ones (F1) keep more of it, making bad-angle landings feel sketchier
+        var avKeep=1-(0.45+landSk.stability*0.4);
+        Body.setAngularVelocity(bike.chassis,bike.chassis.angularVelocity*Math.max(avKeep,0.15));
+
         if(airtime>80) playLand(landSpd);
-        spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),9,'rgba(150,120,90,0.5)');
+        var hardLanding=landSpd>7||landAngleAbs>0.35;
+        spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),hardLanding?15:9,'rgba(150,120,90,0.5)',-Math.sign(bike.chassis.velocity.x||1)*1.8);
+        if(hardLanding) shake=Math.max(shake,4+badness*10);
         if(airtime>280){
           airCount++; airStat.textContent=airCount;
           spawnAura(bike.chassis.position.x,bike.chassis.position.y+16);
@@ -795,6 +939,10 @@
         else if(flips>=0.8){ trickName=(airCumRot<0?'BACKFLIP':'FRONTFLIP'); basePoints=150; }
         else if(airtime>280){ trickName='BIG AIR'; basePoints=50; }
         if(trickName) awardTrick(now,trickName,basePoints,bike.chassis.position.x,bike.chassis.position.y-70);
+
+        if(airtime>300 && landAngleAbs<0.18){
+          awardTrick(now,'PERFECT LANDING',80,bike.chassis.position.x,bike.chassis.position.y-88);
+        }
       }
       airborne=nowAirborne;
 
@@ -904,6 +1052,20 @@
       soilStops:[[0,'#eef6fa'],[0.05,'#bcdcea'],[0.14,'#8fb9cc'],[0.55,'#5f8a9c'],[1,'#3a5a68']],
       soilEdge:'#bcdcea', bladeColor:'#dff1f8', pebbleColor:'#6f96a8',
       flowerPetal:null, flowerCenter:null, surface:'snow', propSet:'arctic'
+    },
+    { name:'volcanic', isNight:false, aurora:false,
+      sky:['#3a1a14','#7a2e1a','#e0703a'], sunMoon:'#ffb060', sunGlow:'rgba(255,140,60,0.7)',
+      ridgeFar:'#4a2418', ridgeNear:'#2e1710',
+      soilStops:[[0,'#3a2018'],[0.05,'#241210'],[0.14,'#4a1c10'],[0.4,'#c9401a'],[0.55,'#7a2a10'],[1,'#1a0c08']],
+      soilEdge:'#241210', bladeColor:'#5a2a18', pebbleColor:'#1a0c08',
+      flowerPetal:null, flowerCenter:null, surface:'grass', propSet:'volcanic'
+    },
+    { name:'beach', isNight:false, aurora:false,
+      sky:['#6ec8e8','#a8e0ec','#fff6d8'], sunMoon:'#fff2c0', sunGlow:'rgba(255,242,192,0.9)',
+      ridgeFar:'#9fd8d0', ridgeNear:'#6ec0b4',
+      soilStops:[[0,'#f0dca0'],[0.05,'#e0c478'],[0.14,'#c9a860'],[0.55,'#a8823e'],[1,'#6e5426']],
+      soilEdge:'#e0c478', bladeColor:'#7a9a5a', pebbleColor:'#8a6a3a',
+      flowerPetal:null, flowerCenter:null, surface:'sand', propSet:'beach'
     }
   ];
   function currentTheme(){ return THEMES[(level-1)%THEMES.length]; }
@@ -942,6 +1104,17 @@
       ctx.beginPath(); ctx.arc(moonX+2,moonY-9,2.4,0,Math.PI*2); ctx.fill();
     } else {
       var sunX=camX+W*0.78, sunY=120;
+      var rayRot=performance.now()/8000;
+      ctx.save();
+      ctx.globalAlpha=0.25; ctx.strokeStyle=th.sunMoon; ctx.lineWidth=2.4; ctx.lineCap='round';
+      for(var ray=0;ray<8;ray++){
+        var ra=rayRot+ray*(Math.PI/4);
+        ctx.beginPath();
+        ctx.moveTo(sunX+Math.cos(ra)*36,sunY+Math.sin(ra)*36);
+        ctx.lineTo(sunX+Math.cos(ra)*52,sunY+Math.sin(ra)*52);
+        ctx.stroke();
+      }
+      ctx.restore();
       var sunGlow=ctx.createRadialGradient(sunX,sunY,4,sunX,sunY,60);
       sunGlow.addColorStop(0,th.sunGlow); sunGlow.addColorStop(1,'rgba(255,247,224,0)');
       ctx.fillStyle=sunGlow; ctx.beginPath(); ctx.arc(sunX,sunY,60,0,Math.PI*2); ctx.fill();
@@ -1063,6 +1236,37 @@
         ctx.beginPath(); ctx.moveTo(az,aty-30); ctx.lineTo(az-4,aty-20); ctx.lineTo(az+4,aty-20); ctx.closePath(); ctx.fill();
         ctx.globalAlpha=1;
       }
+    } else if(th.propSet==='volcanic'){
+      for(var vx=camX-100;vx<camX+W+100;vx+=110){
+        var vseed=Math.abs(Math.sin(vx*0.019))%1;
+        if(vseed<0.45) continue;
+        var vty=340-Math.abs(Math.sin((vx-nearOx)/220))*60;
+        ctx.fillStyle='#2e1710'; ctx.globalAlpha=0.6;
+        ctx.beginPath(); ctx.moveTo(vx,vty-26); ctx.lineTo(vx-11,vty-4); ctx.lineTo(vx+11,vty-4); ctx.closePath(); ctx.fill();
+        ctx.globalAlpha=1;
+        if(vseed>0.75){
+          var glow=0.4+0.6*Math.abs(Math.sin(performance.now()/400+vx));
+          ctx.globalAlpha=glow*0.9; ctx.fillStyle='#ff7a2a';
+          ctx.beginPath(); ctx.arc(vx,vty-14,1.8,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=1;
+        }
+      }
+    } else if(th.propSet==='beach'){
+      for(var pmx=camX-100;pmx<camX+W+100;pmx+=130){
+        var pmseed=Math.abs(Math.sin(pmx*0.023))%1;
+        if(pmseed<0.45) continue;
+        var pmty=340-Math.abs(Math.sin((pmx-nearOx)/220))*60;
+        ctx.globalAlpha=0.6;
+        ctx.strokeStyle='#7a5a2a'; ctx.lineWidth=4; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(pmx,pmty); ctx.quadraticCurveTo(pmx+6,pmty-16,pmx+3,pmty-26); ctx.stroke();
+        ctx.fillStyle='#4f9a5a';
+        [[-1,-1],[0,-1.3],[1,-1],[0.6,-0.6],[-0.6,-0.6]].forEach(function(fr){
+          ctx.beginPath();
+          ctx.ellipse(pmx+3+fr[0]*10,pmty-26+fr[1]*8,8,3.4,fr[0]*0.5,0,Math.PI*2);
+          ctx.fill();
+        });
+        ctx.globalAlpha=1;
+      }
     }
 
     function cloud(cxp,cy,scale,parallax){
@@ -1078,6 +1282,19 @@
     if(!th.isNight){
       [[300,140,1,0.15],[900,100,1.4,0.2],[1600,160,0.9,0.12],[2400,110,1.2,0.18],[3200,150,1,0.15],[4000,120,1.3,0.2],[4800,150,0.9,0.14]]
         .forEach(function(cd){cloud(cd[0],cd[1],cd[2],cd[3]);});
+
+      // small animated birds, drifting slowly across the sky
+      function bird(cxp,cy,parallax,flap){
+        var ox=(camX*parallax)%2600;
+        var x=((cxp-ox)%2800+2800)%2800+camX-200;
+        var wing=Math.sin(performance.now()/180+flap)*6;
+        ctx.strokeStyle='rgba(40,40,45,0.5)'; ctx.lineWidth=1.6; ctx.lineCap='round';
+        ctx.beginPath();
+        ctx.moveTo(x-7,cy+wing); ctx.lineTo(x,cy); ctx.lineTo(x+7,cy+wing);
+        ctx.stroke();
+      }
+      [[400,80,0.22,0],[520,86,0.22,1.4],[640,78,0.22,0.7],[2600,95,0.18,0.3],[2700,90,0.18,1.9],[4200,70,0.25,0.5]]
+        .forEach(function(bd){bird(bd[0],bd[1],bd[2],bd[3]);});
     }
 
     for(var r=0;r<trackRuns.length;r++){
@@ -1166,6 +1383,23 @@
         if(bseed>0.5){
           ctx.fillStyle='#f4fbff'; ctx.beginPath(); ctx.ellipse(bx,bgy-4,10,7,0,0,Math.PI*2); ctx.fill();
           ctx.fillStyle='rgba(160,200,220,0.4)'; ctx.beginPath(); ctx.ellipse(bx-3,bgy-2,4,2.4,0,0,Math.PI*2); ctx.fill();
+        }
+      } else if(th.propSet==='volcanic'){
+        if(bseed>0.5){
+          ctx.fillStyle='#2a1610'; ctx.strokeStyle='#150a06'; ctx.lineWidth=1.4;
+          ctx.beginPath(); ctx.ellipse(bx,bgy-4,9,6,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+          var eglow=0.4+0.6*Math.abs(Math.sin(performance.now()/350+bx));
+          ctx.globalAlpha=eglow; ctx.fillStyle='#ff7a2a';
+          ctx.beginPath(); ctx.arc(bx-2,bgy-5,1.4,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=1;
+        }
+      } else if(th.propSet==='beach'){
+        if(bseed>0.5 && bseed<0.8){
+          ctx.fillStyle='#f2ead0'; ctx.strokeStyle='#c9a86a'; ctx.lineWidth=1;
+          ctx.beginPath(); ctx.arc(bx,bgy-3,4,Math.PI,0); ctx.fill(); ctx.stroke();
+        } else if(bseed>=0.8){
+          ctx.strokeStyle='#8a6a3a'; ctx.lineWidth=3; ctx.lineCap='round';
+          ctx.beginPath(); ctx.moveTo(bx-8,bgy-2); ctx.lineTo(bx+8,bgy-4); ctx.stroke();
         }
       } else if(th.propSet==='night'){
         if(bseed>0.5 && bseed<0.75){
@@ -1344,30 +1578,87 @@
         spawnDust(exX,exY,1,'rgba(120,124,132,0.35)');
       }
 
-      // frame — gradient body using the active skin's palette
+      // frame — a distinct silhouette per vehicle type, not just a recolored rectangle
       ctx.save(); ctx.translate(c.position.x,c.position.y); ctx.rotate(c.angle);
-      var frameGrad=ctx.createLinearGradient(0,-11,0,11);
+      var frameGrad=ctx.createLinearGradient(0,-16,0,10);
       frameGrad.addColorStop(0,sk.frameTop); frameGrad.addColorStop(0.5,sk.frameMid); frameGrad.addColorStop(1,sk.frameBot);
-      ctx.fillStyle=frameGrad;
+
       ctx.beginPath();
-      if(ctx.roundRect) ctx.roundRect(-39,-11,78,22,6); else ctx.rect(-39,-11,78,22);
+      if(sk.bodyStyle==='sport'){
+        // sleek tapered nose, low tail hump — sportbike profile
+        ctx.moveTo(-30,4);
+        ctx.quadraticCurveTo(-34,-6,-22,-10);
+        ctx.quadraticCurveTo(-6,-17,14,-16);
+        ctx.quadraticCurveTo(30,-15,44,-7);
+        ctx.quadraticCurveTo(50,-3,46,3);
+        ctx.quadraticCurveTo(30,7,0,8);
+        ctx.quadraticCurveTo(-16,9,-30,4);
+      } else if(sk.bodyStyle==='scooter'){
+        // step-through frame: tall front leg shield (front = +x), flat floorboard, rounded rear trunk
+        ctx.moveTo(28,6);
+        ctx.lineTo(-8,6);
+        ctx.quadraticCurveTo(-22,6,-22,-5);
+        ctx.quadraticCurveTo(-22,-12,-13,-12);
+        ctx.lineTo(4,-12);
+        ctx.quadraticCurveTo(16,-24,22,-12);
+        ctx.quadraticCurveTo(30,-4,28,6);
+      } else if(sk.bodyStyle==='monster'){
+        // flatbed at the rear, boxy cab with a sloped hood up front (front = +x)
+        ctx.moveTo(-34,10);
+        ctx.lineTo(-34,-1);
+        ctx.lineTo(4,-1);
+        ctx.lineTo(4,-6);
+        ctx.quadraticCurveTo(4,-15,14,-15);
+        ctx.lineTo(22,-15);
+        ctx.quadraticCurveTo(30,-15,32,-8);
+        ctx.lineTo(34,-1);
+        ctx.lineTo(34,10);
+      } else if(sk.bodyStyle==='f1'){
+        // extremely low, wide single-seater tub
+        ctx.moveTo(-40,6);
+        ctx.quadraticCurveTo(-40,-4,-28,-6);
+        ctx.lineTo(18,-6);
+        ctx.quadraticCurveTo(32,-6,38,-2);
+        ctx.lineTo(38,4);
+        ctx.quadraticCurveTo(18,7,-10,7);
+        ctx.lineTo(-40,6);
+      } else if(sk.bodyStyle==='chopper'){
+        // long, low, stretched tank and seat
+        ctx.moveTo(-36,6);
+        ctx.quadraticCurveTo(-38,-2,-28,-4);
+        ctx.quadraticCurveTo(-10,-14,10,-12);
+        ctx.quadraticCurveTo(24,-10,30,-2);
+        ctx.quadraticCurveTo(32,2,28,5);
+        ctx.quadraticCurveTo(0,9,-36,6);
+      } else if(sk.bodyStyle==='buggy'){
+        // open flat pan chassis between the wheels, no bodywork above the belt line
+        ctx.moveTo(-32,8);
+        ctx.lineTo(-32,-2);
+        ctx.quadraticCurveTo(-32,-8,-22,-8);
+        ctx.lineTo(26,-8);
+        ctx.quadraticCurveTo(34,-8,34,-2);
+        ctx.lineTo(34,8);
+      } else {
+        if(ctx.roundRect) ctx.roundRect(-39,-11,78,22,6); else ctx.rect(-39,-11,78,22);
+      }
+      ctx.closePath();
+      ctx.fillStyle=frameGrad;
       ctx.fill();
       ctx.strokeStyle=sk.frameBot; ctx.lineWidth=1.6; ctx.stroke();
-      ctx.fillStyle='rgba(255,255,255,0.25)';
-      ctx.fillRect(-33,-8,50,3);
 
       if(sk.bodyStyle==='sport'){
-        // aggressive fairing wedge at the front
-        ctx.fillStyle=sk.accent;
-        ctx.beginPath(); ctx.moveTo(39,-11); ctx.lineTo(50,-3); ctx.lineTo(39,4); ctx.closePath(); ctx.fill();
+        // small flyscreen at the nose tip
+        ctx.fillStyle='rgba(200,215,230,0.5)'; ctx.strokeStyle=sk.frameBot; ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.moveTo(30,-13); ctx.lineTo(42,-11); ctx.lineTo(38,-4); ctx.lineTo(28,-6); ctx.closePath();
+        ctx.fill(); ctx.stroke();
       } else if(sk.bodyStyle==='scooter'){
-        // small windscreen
+        // small windscreen above the front leg shield
         ctx.fillStyle='rgba(230,250,250,0.55)'; ctx.strokeStyle='#2c7478'; ctx.lineWidth=1.4;
-        ctx.beginPath(); ctx.moveTo(30,-11); ctx.lineTo(40,-24); ctx.lineTo(44,-22); ctx.lineTo(36,-9); ctx.closePath();
+        ctx.beginPath(); ctx.moveTo(10,-12); ctx.lineTo(20,-25); ctx.lineTo(24,-23); ctx.lineTo(16,-10); ctx.closePath();
         ctx.fill(); ctx.stroke();
       } else if(sk.bodyStyle==='monster'){
-        // cartoon dragon face plate on the front
-        ctx.save(); ctx.translate(40,-4);
+        // cartoon dragon face plate on the front bumper
+        ctx.save(); ctx.translate(32,2);
         ctx.fillStyle='#2b5a1e'; ctx.beginPath(); ctx.ellipse(0,0,9,10,0,0,Math.PI*2); ctx.fill();
         ctx.fillStyle='#ffd75e'; ctx.beginPath(); ctx.arc(-2,-3,2,0,Math.PI*2); ctx.arc(-2,3,2,0,Math.PI*2); ctx.fill();
         ctx.fillStyle='#1c1f26'; ctx.beginPath(); ctx.arc(-2,-3,0.8,0,Math.PI*2); ctx.arc(-2,3,0.8,0,Math.PI*2); ctx.fill();
@@ -1386,6 +1677,24 @@
         ctx.fillStyle=sk.accent; ctx.fillRect(-56,-22,16,3.5);
         // yellow racing stripe down the nose
         ctx.fillStyle=sk.accent; ctx.fillRect(-10,-2,60,3);
+      } else if(sk.bodyStyle==='chopper'){
+        // extended chrome front fork, raked out like a classic cruiser
+        ctx.strokeStyle=sk.accent; ctx.lineWidth=3.5; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(30,-8); ctx.lineTo(56,-26); ctx.stroke();
+        ctx.strokeStyle=sk.frameBot; ctx.lineWidth=1.6;
+        ctx.beginPath(); ctx.moveTo(30,-4); ctx.lineTo(52,-20); ctx.stroke();
+        // chrome exhaust pipes along the side
+        ctx.strokeStyle=sk.accent; ctx.lineWidth=2.6;
+        ctx.beginPath(); ctx.moveTo(-20,9); ctx.lineTo(-48,11); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-16,9); ctx.lineTo(-44,15); ctx.stroke();
+      } else if(sk.bodyStyle==='buggy'){
+        // roll cage arcing over the seat
+        ctx.strokeStyle=sk.accent; ctx.lineWidth=3.5; ctx.lineCap='round';
+        ctx.beginPath(); ctx.arc(0,-11,20,Math.PI,Math.PI*2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-20,-11); ctx.lineTo(-20,-3); ctx.moveTo(20,-11); ctx.lineTo(20,-3); ctx.stroke();
+        // stubby front brush guard
+        ctx.strokeStyle=sk.frameBot; ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(39,-8); ctx.lineTo(48,-8); ctx.lineTo(48,6); ctx.lineTo(39,6); ctx.stroke();
       }
 
       // handlebar (F1 gets a small steering wheel instead)
