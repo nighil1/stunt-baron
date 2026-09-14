@@ -60,12 +60,15 @@
   }
   #hint{
     position:absolute;top:10px;left:50%;transform:translateX(-50%);
-    max-width:88%;text-align:center;
-    font-size:11.5px;font-weight:600;color:#fff;pointer-events:none;z-index:4;
+    max-width:80%;text-align:center;
+    font-size:10.5px;font-weight:600;color:#fff;pointer-events:none;z-index:4;
     background:rgba(12,14,18,0.55);border:1px solid rgba(255,255,255,0.08);
-    padding:7px 14px;border-radius:10px;backdrop-filter:blur(2px);
-    line-height:1.4;
+    padding:5px 12px;border-radius:10px;backdrop-filter:blur(2px);
+    line-height:1.35;
+    transition:opacity 0.6s ease;
+    opacity:1;
   }
+  #hint.hint-fade{opacity:0;}
   #overlay{
     position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
     flex-direction:column;gap:10px;background:rgba(10,12,16,0.78);z-index:10;text-align:center;padding:24px;
@@ -331,6 +334,7 @@
 
   var crashed=false, finished=false, maxDist=0, best=0, airCount=0, coinCount=0;
   var airCumRot=0, lastAirAngle=0;
+  var airStartX=0, airStartY=0, maxAirHeightPx=0;
   var score=0, comboLevel=0, lastTrickTime=-99999;
   var bestScore=0, leaderboard=[];
   try{ bestScore=parseInt(localStorage.getItem('stuntBaronBestScore')||'0',10)||0; }catch(e){}
@@ -416,6 +420,7 @@
     crashed=false; finished=false; maxDist=0; airCount=0; coinCount=0;
     distStat.textContent='0 m'; airStat.textContent='0'; coinStat.textContent='0';
     score=0; comboLevel=0; lastTrickTime=-99999; airCumRot=0; scoreStat.textContent='0';
+    airStartX=0; airStartY=0; maxAirHeightPx=0;
     trailA=[]; trailB=[]; auras=[]; popups=[]; shake=0; dust=[]; sparkles=[]; confetti=[]; debris=[];
     groundContact.wA=false; groundContact.wB=false; airborne=false;
     holdAccel=0; holdReverse=0;
@@ -589,9 +594,23 @@
   }
 
   var input={accel:false,reverse:false};
+  var hintEl=document.getElementById('hint');
+  var tutorialSeen=false;
+  try{ tutorialSeen=localStorage.getItem('stuntBaronTutorialSeen')==='1'; }catch(e){}
+  if(tutorialSeen && hintEl) hintEl.style.display='none';
+  function dismissTutorial(){
+    if(tutorialSeen) return;
+    tutorialSeen=true;
+    if(hintEl){
+      hintEl.classList.add('hint-fade');
+      setTimeout(function(){ hintEl.style.display='none'; },650);
+    }
+    try{ localStorage.setItem('stuntBaronTutorialSeen','1'); }catch(e){}
+  }
+
   function bindBtn(id,key){
     var el=document.getElementById(id);
-    var on=function(ev){ev.preventDefault();input[key]=true;el.classList.add('active');};
+    var on=function(ev){ev.preventDefault();input[key]=true;el.classList.add('active');dismissTutorial();};
     var off=function(ev){ev.preventDefault();input[key]=false;el.classList.remove('active');};
     el.addEventListener('pointerdown',on);
     el.addEventListener('pointerup',off);
@@ -601,8 +620,8 @@
   bindBtn('accel','accel'); bindBtn('reverse','reverse');
 
   window.addEventListener('keydown',function(e){
-    if(e.key==='ArrowRight'||e.key==='d') input.accel=true;
-    if(e.key==='ArrowLeft'||e.key==='a') input.reverse=true;
+    if(e.key==='ArrowRight'||e.key==='d'){ input.accel=true; dismissTutorial(); }
+    if(e.key==='ArrowLeft'||e.key==='a'){ input.reverse=true; dismissTutorial(); }
   });
   window.addEventListener('keyup',function(e){
     if(e.key==='ArrowRight'||e.key==='d') input.accel=false;
@@ -818,17 +837,25 @@
       if(bike.chassis.position.x>finishX) win();
 
       var nowAirborne=!groundContact.wA && !groundContact.wB;
+      if(!crashed && !finished){
       if(nowAirborne){
-        if(!airborne){ airStartT=now; airCumRot=0; lastAirAngle=bike.chassis.angle; }
-        else {
+        if(!airborne){
+          airStartT=now; airCumRot=0; lastAirAngle=bike.chassis.angle;
+          airStartX=bike.chassis.position.x; airStartY=bike.chassis.position.y;
+          maxAirHeightPx=0;
+        } else {
           var da=bike.chassis.angle-lastAirAngle;
           while(da>Math.PI) da-=Math.PI*2;
           while(da<-Math.PI) da+=Math.PI*2;
           airCumRot+=da; lastAirAngle=bike.chassis.angle;
+          // world Y decreases upward, so height gained is airStartY-currentY
+          var riseNow=airStartY-bike.chassis.position.y;
+          if(riseNow>maxAirHeightPx) maxAirHeightPx=riseNow;
         }
       } else if(airborne){
         var airtime=now-airStartT;
         var landSpd=Math.hypot(bike.chassis.velocity.x,bike.chassis.velocity.y);
+        var landAngVel=Math.abs(bike.chassis.angularVelocity);
         if(airtime>80) playLand(landSpd);
         spawnDust(bike.chassis.position.x,groundYAt(bike.chassis.position.x),9,'rgba(150,120,90,0.5)',-Math.sign(bike.chassis.velocity.x||1)*1.8);
         if(airtime>280){
@@ -837,19 +864,33 @@
           spawnPopup(bike.chassis.position.x,bike.chassis.position.y-46,'+'+Math.floor(airtime)+'ms AIR!','#e0c064');
           shake=Math.max(shake,6);
         }
+
+        // one consolidated result for this jump — detection (what happened)
+        // kept separate from scoring (awardTrick's point values), reusing the
+        // exact same thresholds/awards the existing system already used
         var flips=Math.abs(airCumRot)/(Math.PI*2);
+        var landAngle=((bike.chassis.angle%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;
+        var jumpResult={
+          airTime:airtime,
+          jumpDistance:Math.abs(bike.chassis.position.x-airStartX),
+          maxAirHeight:maxAirHeightPx,
+          rotation:airCumRot,
+          flips:flips,
+          flipDirection:airCumRot<0?'back':'front',
+          bigAir:(airtime>420||maxAirHeightPx>70),
+          perfectLanding:(airtime>300 && Math.abs(landAngle)<0.18 && landAngVel<0.045)
+        };
+
         var trickName=null, basePoints=0;
-        if(flips>=1.7){ trickName='DOUBLE FLIP'; basePoints=400; }
-        else if(flips>=0.8){ trickName=(airCumRot<0?'BACKFLIP':'FRONTFLIP'); basePoints=150; }
-        else if(airtime>280){ trickName='BIG AIR'; basePoints=50; }
+        if(jumpResult.flips>=1.7){ trickName='DOUBLE FLIP'; basePoints=400; }
+        else if(jumpResult.flips>=0.8){ trickName=(jumpResult.flipDirection==='back'?'BACKFLIP':'FRONTFLIP'); basePoints=150; }
+        else if(jumpResult.bigAir){ trickName='BIG AIR'; basePoints=50; }
         if(trickName) awardTrick(now,trickName,basePoints,bike.chassis.position.x,bike.chassis.position.y-70);
 
-        if(airtime>300){
-          var landAngle=((bike.chassis.angle%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;
-          if(Math.abs(landAngle)<0.18){
-            awardTrick(now,'PERFECT LANDING',80,bike.chassis.position.x,bike.chassis.position.y-88);
-          }
+        if(jumpResult.perfectLanding){
+          awardTrick(now,'PERFECT LANDING',80,bike.chassis.position.x,bike.chassis.position.y-88);
         }
+      }
       }
       airborne=nowAirborne;
 
@@ -1058,28 +1099,64 @@
     ridge(0.25,300,90,340,th.ridgeFar);
     var nearOx=ridge(0.45,340,60,220,th.ridgeNear);
 
+    // World-anchored scenery: every scenery loop below samples from a grid
+    // snapped to fixed multiples of its step, so the exact same world-space
+    // slot is evaluated every frame regardless of the camera's exact
+    // position. Without this, loops that started at "camX-100" would sample
+    // slightly different x-values as the camera moved continuously, so a
+    // "tree" wasn't really a persistent object — it was a fresh sample of a
+    // continuous function taken at a different point each frame, which is
+    // what caused the flipbook/regenerating feeling. Snapping fixes that: a
+    // slot's seed (and therefore its type/size/rotation) never changes.
+    function snapStart(camStart,step){ return Math.floor(camStart/step)*step; }
+    // simple deterministic hash-ish helper for extra per-object variety
+    // (size/rotation/shape pick) that's independent of the seed already used
+    // to decide whether/what to place, so variety doesn't skew placement odds
+    function hash2(x,salt){ return Math.abs(Math.sin(x*0.0731+salt*13.7))%1; }
+
     // hill-layer scenery — themed per level: countryside gets the farm look,
-    // desert gets cacti, night gets dark pines + fireflies, arctic gets snow pines
+    // desert gets cacti, night gets dark pines + fireflies, arctic gets snow
+    // pines, volcanic gets glowing rock spires, beach gets palms.
+    //
+    // These sit on the midground ridge, so they share its parallax offset
+    // (midOx, the same 0.45 factor already used to draw the ridge itself) —
+    // that's what makes them visually scroll at the ridge's slower rate
+    // instead of the 1:1 foreground rate, giving real depth. The sampling
+    // grid is built in "slot space" (pre-parallax) and snapped to a fixed
+    // step, so a given slot's seed — and therefore its type, size and sway
+    // phase — never changes no matter where the camera is when it's sampled.
+    var midOx=nearOx;
+    var swayT=performance.now()/1000;
     if(th.propSet==='countryside'){
-      for(var tx=camX-100;tx<camX+W+100;tx+=95){
-        var seed=Math.abs(Math.sin(tx*0.017))%1;
-        var ty=340-Math.abs(Math.sin((tx-nearOx)/220))*60;
+      var cStep=95;
+      for(var tSlot=snapStart(camX-100-midOx,cStep);tSlot<camX+W+100-midOx;tSlot+=cStep){
+        var tx=tSlot+midOx;
+        var seed=Math.abs(Math.sin(tSlot*0.017))%1;
+        var ty=340-Math.abs(Math.sin(tSlot/220))*60;
+        var sizeV=0.85+hash2(tSlot,1)*0.3;
+        var sway=Math.sin(swayT*0.8+tSlot)*0.035;
         if(seed>0.42 && seed<0.72){
+          ctx.save(); ctx.translate(tx,ty); ctx.rotate(sway); ctx.scale(sizeV,sizeV);
           ctx.fillStyle='#7fae5a'; ctx.globalAlpha=0.55;
           ctx.beginPath();
-          ctx.moveTo(tx,ty-30); ctx.lineTo(tx-9,ty-6); ctx.lineTo(tx+9,ty-6); ctx.closePath(); ctx.fill();
+          ctx.moveTo(0,-30); ctx.lineTo(-9,-6); ctx.lineTo(9,-6); ctx.closePath(); ctx.fill();
           ctx.beginPath();
-          ctx.moveTo(tx,ty-22); ctx.lineTo(tx-7,ty+2); ctx.lineTo(tx+7,ty+2); ctx.closePath(); ctx.fill();
+          ctx.moveTo(0,-22); ctx.lineTo(-7,2); ctx.lineTo(7,2); ctx.closePath(); ctx.fill();
           ctx.globalAlpha=1;
+          ctx.restore();
         } else if(seed>=0.72){
+          ctx.save(); ctx.translate(tx,ty); ctx.scale(sizeV,sizeV);
           ctx.globalAlpha=0.55;
           ctx.strokeStyle='#5a4326'; ctx.lineWidth=3;
-          ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx,ty-14); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-14); ctx.stroke();
+          ctx.save(); ctx.translate(0,-20); ctx.rotate(sway);
           ctx.fillStyle='#6fb356';
-          ctx.beginPath(); ctx.arc(tx,ty-20,10,0,Math.PI*2); ctx.fill();
-          ctx.beginPath(); ctx.arc(tx-6,ty-16,7,0,Math.PI*2); ctx.fill();
-          ctx.beginPath(); ctx.arc(tx+6,ty-16,7,0,Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(0,0,10,0,Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(-6,4,7,0,Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(6,4,7,0,Math.PI*2); ctx.fill();
+          ctx.restore();
           ctx.globalAlpha=1;
+          ctx.restore();
         } else if(seed>0.1 && seed<0.16){
           ctx.globalAlpha=0.5; ctx.strokeStyle='#6b4a2a'; ctx.lineWidth=2.4;
           ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx,ty-12); ctx.moveTo(tx+16,ty); ctx.lineTo(tx+16,ty-12);
@@ -1087,9 +1164,10 @@
           ctx.globalAlpha=1;
         }
       }
-      var windmillX=Math.round(camX/2600)*2600+1400;
+      var wmSlot=Math.round((camX-midOx)/2600)*2600+1400;
+      var windmillX=wmSlot+midOx;
       if(windmillX>camX-150 && windmillX<camX+W+150){
-        var wty=340-Math.abs(Math.sin((windmillX-nearOx)/220))*60;
+        var wty=340-Math.abs(Math.sin(wmSlot/220))*60;
         ctx.globalAlpha=0.6;
         ctx.fillStyle='#e8ddc8'; ctx.fillRect(windmillX-9,wty-24,18,24);
         ctx.fillStyle='#a83a2a'; ctx.beginPath(); ctx.moveTo(windmillX-11,wty-24); ctx.lineTo(windmillX,wty-34); ctx.lineTo(windmillX+11,wty-24); ctx.closePath(); ctx.fill();
@@ -1104,38 +1182,85 @@
         ctx.globalAlpha=1;
       }
     } else if(th.propSet==='desert'){
-      for(var dx=camX-100;dx<camX+W+100;dx+=110){
-        var dseed=Math.abs(Math.sin(dx*0.021))%1;
-        var dty=340-Math.abs(Math.sin((dx-nearOx)/220))*60;
-        if(dseed>0.5){
+      var dStep=85;
+      for(var dSlot=snapStart(camX-100-midOx,dStep);dSlot<camX+W+100-midOx;dSlot+=dStep){
+        var dx=dSlot+midOx;
+        var dseed=Math.abs(Math.sin(dSlot*0.021))%1;
+        var dty=340-Math.abs(Math.sin(dSlot/220))*60;
+        if(dseed>0.35 && dseed<0.7){
+          var dSize=0.8+hash2(dSlot,2)*0.4;
+          ctx.save(); ctx.translate(dx,dty); ctx.scale(dSize,dSize);
           ctx.globalAlpha=0.55; ctx.strokeStyle='#3f6b2a'; ctx.fillStyle='#4f8a3a'; ctx.lineWidth=6; ctx.lineCap='round';
-          ctx.beginPath(); ctx.moveTo(dx,dty); ctx.lineTo(dx,dty-24); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(dx,dty-14); ctx.lineTo(dx-8,dty-14); ctx.lineTo(dx-8,dty-22); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(dx,dty-18); ctx.lineTo(dx+8,dty-18); ctx.lineTo(dx+8,dty-26); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(0,-24); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(-8,-14); ctx.lineTo(-8,-22); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(0,-18); ctx.lineTo(8,-18); ctx.lineTo(8,-26); ctx.stroke();
+          ctx.globalAlpha=1;
+          ctx.restore();
+        } else if(dseed>=0.7 && dseed<0.85){
+          var rSize=0.7+hash2(dSlot,3)*0.5;
+          ctx.globalAlpha=0.5; ctx.fillStyle='#a8794a';
+          ctx.beginPath(); ctx.ellipse(dx,dty-3*rSize,8*rSize,5*rSize,0,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=1;
+        } else if(dseed>=0.85){
+          ctx.globalAlpha=0.45; ctx.strokeStyle='#8a9a3a'; ctx.lineWidth=1.4;
+          for(var shb=0;shb<3;shb++){
+            var sha=shb*(Math.PI/3)+hash2(dSlot,4+shb);
+            ctx.beginPath(); ctx.moveTo(dx,dty); ctx.lineTo(dx+Math.cos(sha)*7,dty-Math.sin(sha)*7-4); ctx.stroke();
+          }
           ctx.globalAlpha=1;
         }
+      }
+      var archSlot=Math.round((camX-midOx)/3000)*3000+1800;
+      var archX=archSlot+midOx;
+      if(archX>camX-200 && archX<camX+W+200){
+        var archY=340-Math.abs(Math.sin(archSlot/220))*60;
+        ctx.globalAlpha=0.5; ctx.fillStyle='#a8794a';
+        ctx.beginPath(); ctx.ellipse(archX-22,archY-16,7,24,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(archX+22,archY-16,7,24,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(archX,archY-42,26,10,0,Math.PI,0); ctx.fill();
+        ctx.globalAlpha=1;
       }
     } else if(th.propSet==='night'){
-      for(var nx=camX-100;nx<camX+W+100;nx+=95){
-        var nseed=Math.abs(Math.sin(nx*0.017))%1;
+      var nStep=95;
+      for(var nSlot=snapStart(camX-100-midOx,nStep);nSlot<camX+W+100-midOx;nSlot+=nStep){
+        var nx=nSlot+midOx;
+        var nseed=Math.abs(Math.sin(nSlot*0.017))%1;
         if(nseed<0.4) continue;
-        var nty=340-Math.abs(Math.sin((nx-nearOx)/220))*60;
+        var nty=340-Math.abs(Math.sin(nSlot/220))*60;
+        var nSway=Math.sin(swayT*0.7+nSlot)*0.03;
+        ctx.save(); ctx.translate(nx,nty); ctx.rotate(nSway);
         ctx.fillStyle='#1a2e14'; ctx.globalAlpha=0.65;
-        ctx.beginPath(); ctx.moveTo(nx,nty-30); ctx.lineTo(nx-9,nty-6); ctx.lineTo(nx+9,nty-6); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(nx,nty-22); ctx.lineTo(nx-7,nty+2); ctx.lineTo(nx+7,nty+2); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(0,-30); ctx.lineTo(-9,-6); ctx.lineTo(9,-6); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(0,-22); ctx.lineTo(-7,2); ctx.lineTo(7,2); ctx.closePath(); ctx.fill();
         ctx.globalAlpha=1;
+        ctx.restore();
         if(nseed>0.8){
-          var flicker=0.4+0.6*Math.abs(Math.sin(performance.now()/500+nx));
+          var flicker=0.4+0.6*Math.abs(Math.sin(performance.now()/500+nSlot));
+          var fireX=nx+Math.sin(swayT*1.3+nSlot)*6, fireY=nty-10+Math.cos(swayT*0.9+nSlot)*3;
           ctx.globalAlpha=flicker*0.8; ctx.fillStyle='#e8ff8a';
-          ctx.beginPath(); ctx.arc(nx+Math.sin(nx)*6,nty-10,1.6,0,Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(fireX,fireY,1.6,0,Math.PI*2); ctx.fill();
           ctx.globalAlpha=1;
         }
       }
+      var cabinSlot=Math.round((camX-midOx)/3200)*3200+2100;
+      var cabinX=cabinSlot+midOx;
+      if(cabinX>camX-200 && cabinX<camX+W+200){
+        var cabinY=340-Math.abs(Math.sin(cabinSlot/220))*60;
+        ctx.globalAlpha=0.55;
+        ctx.fillStyle='#151a24'; ctx.fillRect(cabinX-16,cabinY-18,32,18);
+        ctx.beginPath(); ctx.moveTo(cabinX-19,cabinY-18); ctx.lineTo(cabinX,cabinY-30); ctx.lineTo(cabinX+19,cabinY-18); ctx.closePath(); ctx.fill();
+        var winFlicker=0.5+0.5*Math.abs(Math.sin(performance.now()/700+cabinSlot));
+        ctx.globalAlpha=winFlicker*0.8; ctx.fillStyle='#ffd97a';
+        ctx.fillRect(cabinX-6,cabinY-12,7,7);
+        ctx.globalAlpha=1;
+      }
     } else if(th.propSet==='arctic'){
-      for(var az=camX-100;az<camX+W+100;az+=95){
-        var aseed=Math.abs(Math.sin(az*0.017))%1;
+      var aStep=95;
+      for(var aSlot=snapStart(camX-100-midOx,aStep);aSlot<camX+W+100-midOx;aSlot+=aStep){
+        var az=aSlot+midOx;
+        var aseed=Math.abs(Math.sin(aSlot*0.017))%1;
         if(aseed<0.4) continue;
-        var aty=340-Math.abs(Math.sin((az-nearOx)/220))*60;
+        var aty=340-Math.abs(Math.sin(aSlot/220))*60;
         ctx.fillStyle='#274a3a'; ctx.globalAlpha=0.55;
         ctx.beginPath(); ctx.moveTo(az,aty-30); ctx.lineTo(az-9,aty-6); ctx.lineTo(az+9,aty-6); ctx.closePath(); ctx.fill();
         ctx.beginPath(); ctx.moveTo(az,aty-22); ctx.lineTo(az-7,aty+2); ctx.lineTo(az+7,aty+2); ctx.closePath(); ctx.fill();
@@ -1143,42 +1268,113 @@
         ctx.beginPath(); ctx.moveTo(az,aty-30); ctx.lineTo(az-4,aty-20); ctx.lineTo(az+4,aty-20); ctx.closePath(); ctx.fill();
         ctx.globalAlpha=1;
       }
+      // drifting snow — analytic per-flake position from time+seed, no arrays
+      ctx.fillStyle='rgba(255,255,255,0.7)';
+      for(var sf=0;sf<24;sf++){
+        var flakeSeed=sf*53.7;
+        var fx=((camX-150+((flakeSeed*37)%(W+300))-performance.now()/70*(0.3+hash2(sf,3)*0.4))%(W+300)+(W+300))%(W+300)+camX-150;
+        var fy=((performance.now()/28*(0.5+hash2(sf,4)*0.5)+flakeSeed*19)%(H+40))-20;
+        ctx.globalAlpha=0.5+hash2(sf,5)*0.3;
+        ctx.beginPath(); ctx.arc(fx,fy,1+hash2(sf,6)*1.4,0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha=1;
+      var iceSlot=Math.round((camX-midOx)/3000)*3000+1500;
+      var iceX=iceSlot+midOx;
+      if(iceX>camX-200 && iceX<camX+W+200){
+        var iceY=340-Math.abs(Math.sin(iceSlot/220))*60;
+        ctx.globalAlpha=0.6; ctx.fillStyle='#dff1f8'; ctx.strokeStyle='#a9d3e6'; ctx.lineWidth=1.4;
+        ctx.beginPath(); ctx.moveTo(iceX-14,iceY); ctx.lineTo(iceX-6,iceY-38); ctx.lineTo(iceX,iceY-20); ctx.lineTo(iceX+8,iceY-44); ctx.lineTo(iceX+16,iceY); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.globalAlpha=1;
+      }
     } else if(th.propSet==='volcanic'){
-      for(var vx=camX-100;vx<camX+W+100;vx+=110){
-        var vseed=Math.abs(Math.sin(vx*0.019))%1;
+      var vStep=110;
+      for(var vSlot=snapStart(camX-100-midOx,vStep);vSlot<camX+W+100-midOx;vSlot+=vStep){
+        var vx=vSlot+midOx;
+        var vseed=Math.abs(Math.sin(vSlot*0.019))%1;
         if(vseed<0.45) continue;
-        var vty=340-Math.abs(Math.sin((vx-nearOx)/220))*60;
+        var vty=340-Math.abs(Math.sin(vSlot/220))*60;
         ctx.fillStyle='#2e1710'; ctx.globalAlpha=0.6;
         ctx.beginPath(); ctx.moveTo(vx,vty-26); ctx.lineTo(vx-11,vty-4); ctx.lineTo(vx+11,vty-4); ctx.closePath(); ctx.fill();
         ctx.globalAlpha=1;
         if(vseed>0.75){
-          var glow=0.4+0.6*Math.abs(Math.sin(performance.now()/400+vx));
+          var glow=0.4+0.6*Math.abs(Math.sin(performance.now()/400+vSlot));
           ctx.globalAlpha=glow*0.9; ctx.fillStyle='#ff7a2a';
           ctx.beginPath(); ctx.arc(vx,vty-14,1.8,0,Math.PI*2); ctx.fill();
           ctx.globalAlpha=1;
         }
       }
+      // floating ash/embers — same analytic-drift technique as arctic snow
+      for(var ef=0;ef<18;ef++){
+        var emberSeed=ef*41.3;
+        var ex=((camX-150+((emberSeed*29)%(W+300))+Math.sin(performance.now()/900+ef)*20)%(W+300)+(W+300))%(W+300)+camX-150;
+        var ey=((performance.now()/45*(0.4+hash2(ef,7)*0.4)+emberSeed*23)%(H+40));
+        ey=H-20-ey; if(ey<-20) ey+=H+40;
+        var emberGlow=0.5+0.5*Math.abs(Math.sin(performance.now()/300+ef));
+        ctx.globalAlpha=emberGlow*0.7; ctx.fillStyle=ef%3===0?'#ffcc66':'#ff7a2a';
+        ctx.beginPath(); ctx.arc(ex,ey,0.8+hash2(ef,8)*1.2,0,Math.PI*2); ctx.fill();
+      }
+      ctx.globalAlpha=1;
+      var volcSlot=Math.round((camX-midOx)/3400)*3400+2600;
+      var volcX=volcSlot+midOx;
+      if(volcX>camX-250 && volcX<camX+W+250){
+        var volcY=340-Math.abs(Math.sin(volcSlot/220))*60;
+        ctx.globalAlpha=0.45; ctx.fillStyle='#241210';
+        ctx.beginPath(); ctx.moveTo(volcX-40,volcY); ctx.lineTo(volcX-10,volcY-55); ctx.lineTo(volcX+10,volcY-55); ctx.lineTo(volcX+40,volcY); ctx.closePath(); ctx.fill();
+        var volcGlow=0.5+0.5*Math.abs(Math.sin(performance.now()/500+volcSlot));
+        ctx.globalAlpha=volcGlow*0.7; ctx.fillStyle='#ff7a2a';
+        ctx.beginPath(); ctx.arc(volcX,volcY-55,4,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=1;
+      }
     } else if(th.propSet==='beach'){
-      for(var pmx=camX-100;pmx<camX+W+100;pmx+=130){
-        var pmseed=Math.abs(Math.sin(pmx*0.023))%1;
-        if(pmseed<0.45) continue;
-        var pmty=340-Math.abs(Math.sin((pmx-nearOx)/220))*60;
-        ctx.globalAlpha=0.6;
-        ctx.strokeStyle='#7a5a2a'; ctx.lineWidth=4; ctx.lineCap='round';
-        ctx.beginPath(); ctx.moveTo(pmx,pmty); ctx.quadraticCurveTo(pmx+6,pmty-16,pmx+3,pmty-26); ctx.stroke();
+      var pStep=95;
+      for(var pSlot=snapStart(camX-100-midOx,pStep);pSlot<camX+W+100-midOx;pSlot+=pStep){
+        var pmx=pSlot+midOx;
+        var pmseed=Math.abs(Math.sin(pSlot*0.023))%1;
+        var pmty=340-Math.abs(Math.sin(pSlot/220))*60;
+        if(pmseed>=0.55){
+          var leafSway=Math.sin(swayT*1.1+pSlot)*0.12;
+          ctx.globalAlpha=0.6;
+          ctx.strokeStyle='#7a5a2a'; ctx.lineWidth=4; ctx.lineCap='round';
+          ctx.beginPath(); ctx.moveTo(pmx,pmty); ctx.quadraticCurveTo(pmx+6,pmty-16,pmx+3,pmty-26); ctx.stroke();
+          ctx.save(); ctx.translate(pmx+3,pmty-26); ctx.rotate(leafSway);
+          ctx.fillStyle='#4f9a5a';
+          [[-1,-1],[0,-1.3],[1,-1],[0.6,-0.6],[-0.6,-0.6]].forEach(function(fr){
+            ctx.beginPath();
+            ctx.ellipse(fr[0]*10,fr[1]*8,8,3.4,fr[0]*0.5,0,Math.PI*2);
+            ctx.fill();
+          });
+          ctx.restore();
+          ctx.globalAlpha=1;
+        } else if(pmseed>=0.3 && pmseed<0.55){
+          var bgSway=Math.sin(swayT*1.4+pSlot)*4;
+          ctx.globalAlpha=0.5; ctx.strokeStyle='#6f9a4a'; ctx.lineWidth=1.6; ctx.lineCap='round';
+          for(var bgr=0;bgr<3;bgr++){
+            ctx.beginPath(); ctx.moveTo(pmx+bgr*3-3,pmty); ctx.lineTo(pmx+bgr*3-3+bgSway*0.3,pmty-8-bgr*2); ctx.stroke();
+          }
+          ctx.globalAlpha=1;
+        } else if(pmseed>=0.15 && pmseed<0.3){
+          ctx.globalAlpha=0.5; ctx.fillStyle='#c9c2ac';
+          ctx.beginPath(); ctx.ellipse(pmx,pmty-2,6,4,0,0,Math.PI*2); ctx.fill();
+          ctx.globalAlpha=1;
+        }
+      }
+      var islSlot=Math.round((camX-midOx)/3200)*3200+900;
+      var islX=islSlot+midOx;
+      if(islX>camX-250 && islX<camX+W+250){
+        var islY=340-Math.abs(Math.sin(islSlot/220))*60;
+        ctx.globalAlpha=0.4; ctx.fillStyle='#6ec0b4';
+        ctx.beginPath(); ctx.ellipse(islX,islY+2,34,9,0,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#7a5a2a'; ctx.lineWidth=3; ctx.lineCap='round';
+        ctx.beginPath(); ctx.moveTo(islX,islY); ctx.quadraticCurveTo(islX+5,islY-14,islX+2,islY-22); ctx.stroke();
         ctx.fillStyle='#4f9a5a';
-        [[-1,-1],[0,-1.3],[1,-1],[0.6,-0.6],[-0.6,-0.6]].forEach(function(fr){
-          ctx.beginPath();
-          ctx.ellipse(pmx+3+fr[0]*10,pmty-26+fr[1]*8,8,3.4,fr[0]*0.5,0,Math.PI*2);
-          ctx.fill();
-        });
+        ctx.beginPath(); ctx.ellipse(islX+2,islY-24,7,3,0.3,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(islX-4,islY-22,7,3,-0.3,0,Math.PI*2); ctx.fill();
         ctx.globalAlpha=1;
       }
     }
 
-    function cloud(cxp,cy,scale,parallax){
-      var ox=(camX*parallax)%2000;
-      var x=((cxp-ox)%2400+2400)%2400+camX-200;
+    function cloud(x,cy,scale){
       ctx.save(); ctx.globalAlpha=0.85; ctx.fillStyle='#ffffff';
       ctx.beginPath();
       ctx.ellipse(x,cy,26*scale,14*scale,0,0,Math.PI*2);
@@ -1187,21 +1383,41 @@
       ctx.fill(); ctx.restore();
     }
     if(!th.isNight){
-      [[300,140,1,0.15],[900,100,1.4,0.2],[1600,160,0.9,0.12],[2400,110,1.2,0.18],[3200,150,1,0.15],[4000,120,1.3,0.2],[4800,150,0.9,0.14]]
-        .forEach(function(cd){cloud(cd[0],cd[1],cd[2],cd[3]);});
+      // clouds live on two sparse world-anchored layers (different step/parallax
+      // for depth) instead of a short recycling list — genuinely infinite and
+      // never obviously repeats, since each slot's existence/size/height is
+      // its own persistent hash rather than a shared modulo window
+      [[700,110,0.16,1],[560,150,0.13,0.8]].forEach(function(layer){
+        var step=layer[0], baseCy=layer[1], parallax=layer[2], sizeBase=layer[3];
+        var cOx=camX*parallax;
+        for(var cSlot=snapStart(camX-300-cOx,step);cSlot<camX+W+300-cOx;cSlot+=step){
+          if(hash2(cSlot,20)<0.45) continue;
+          var cx=cSlot+cOx;
+          var scale=sizeBase*(0.7+hash2(cSlot,21)*0.7);
+          var cy=baseCy+(hash2(cSlot,22)-0.5)*50;
+          cloud(cx,cy,scale);
+        }
+      });
 
-      // small animated birds, drifting slowly across the sky
-      function bird(cxp,cy,parallax,flap){
-        var ox=(camX*parallax)%2600;
-        var x=((cxp-ox)%2800+2800)%2800+camX-200;
+      // small animated birds, drifting slowly — also world-anchored so a
+      // flock doesn't visibly reset when the camera passes their old slot
+      function bird(x,cy,flap){
         var wing=Math.sin(performance.now()/180+flap)*6;
         ctx.strokeStyle='rgba(40,40,45,0.5)'; ctx.lineWidth=1.6; ctx.lineCap='round';
         ctx.beginPath();
         ctx.moveTo(x-7,cy+wing); ctx.lineTo(x,cy); ctx.lineTo(x+7,cy+wing);
         ctx.stroke();
       }
-      [[400,80,0.22,0],[520,86,0.22,1.4],[640,78,0.22,0.7],[2600,95,0.18,0.3],[2700,90,0.18,1.9],[4200,70,0.25,0.5]]
-        .forEach(function(bd){bird(bd[0],bd[1],bd[2],bd[3]);});
+      var birdParallax=0.2, birdOx=camX*birdParallax, birdStep=850;
+      for(var bSlot=snapStart(camX-200-birdOx,birdStep);bSlot<camX+W+200-birdOx;bSlot+=birdStep){
+        if(hash2(bSlot,30)<0.6) continue;
+        var flockSize=1+Math.floor(hash2(bSlot,31)*3);
+        for(var fb=0;fb<flockSize;fb++){
+          var bx2=bSlot+birdOx+fb*18;
+          var by2=80+hash2(bSlot,32)*30+fb*4;
+          bird(bx2,by2,bSlot+fb*1.4);
+        }
+      }
     }
 
     for(var r=0;r<trackRuns.length;r++){
@@ -1233,6 +1449,69 @@
         if(pseed<0.75) continue;
         ctx.fillStyle=th.pebbleColor;
         ctx.beginPath(); ctx.ellipse(pp.x+((pseed*40)|0)-20,pp.y+34+((pseed*60)|0)%40,4,3,0,0,Math.PI*2); ctx.fill();
+      }
+
+      // sparser ground-detail pass — small rocks, dirt patches, cracks, tiny
+      // plants: roughly every 70-140 world px (drawn's points are 34px apart,
+      // so every 3rd point averages ~102px), anchored to the same persistent
+      // terrain point data as the pebbles above, so it's automatically
+      // world-stable with no extra bookkeeping
+      for(var dk=1;dk<drawn.length;dk+=3){
+        var dp=drawn[dk];
+        var dseed2=hash2(dp.x,40);
+        if(dseed2<0.55) continue;
+        var variant=hash2(dp.x,41);
+        var gscale=0.7+hash2(dp.x,42)*0.6;
+        if(th.propSet==='countryside'){
+          if(variant<0.4){
+            ctx.fillStyle='rgba(120,90,50,0.25)';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y+3,7*gscale,3*gscale,0,0,Math.PI*2); ctx.fill();
+          } else if(variant<0.75){
+            ctx.fillStyle='#8f8f96';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y-1,3*gscale,2*gscale,0,0,Math.PI*2); ctx.fill();
+          } else {
+            ctx.fillStyle=th.flowerPetal||'#ff9fc7';
+            ctx.beginPath(); ctx.arc(dp.x,dp.y-3,1.6*gscale,0,Math.PI*2); ctx.fill();
+          }
+        } else if(th.propSet==='desert'){
+          if(variant<0.5){
+            ctx.strokeStyle='#8a9a3a'; ctx.lineWidth=1.2;
+            ctx.beginPath(); ctx.moveTo(dp.x,dp.y); ctx.lineTo(dp.x-2,dp.y-5*gscale);
+            ctx.moveTo(dp.x,dp.y); ctx.lineTo(dp.x+2,dp.y-4*gscale); ctx.stroke();
+          } else {
+            ctx.fillStyle='rgba(150,110,60,0.3)';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y+2,8*gscale,3*gscale,0,0,Math.PI*2); ctx.fill();
+          }
+        } else if(th.propSet==='night'){
+          ctx.fillStyle='#3a3f30';
+          ctx.beginPath(); ctx.ellipse(dp.x,dp.y-1,3*gscale,2*gscale,0,0,Math.PI*2); ctx.fill();
+        } else if(th.propSet==='arctic'){
+          if(variant<0.6){
+            ctx.fillStyle='rgba(200,225,240,0.6)';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y-1,4*gscale,2.4*gscale,0,0,Math.PI*2); ctx.fill();
+          } else {
+            ctx.fillStyle='#8fa8b6';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y-1,2.6*gscale,2*gscale,0,0,Math.PI*2); ctx.fill();
+          }
+        } else if(th.propSet==='volcanic'){
+          if(variant<0.6){
+            ctx.fillStyle='#221410';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y-1,3.4*gscale,2.2*gscale,0,0,Math.PI*2); ctx.fill();
+          } else {
+            var crackGlow=0.35+0.35*Math.abs(Math.sin(performance.now()/450+dp.x));
+            ctx.globalAlpha=crackGlow; ctx.strokeStyle='#ff7a2a'; ctx.lineWidth=1;
+            ctx.beginPath(); ctx.moveTo(dp.x-4,dp.y); ctx.lineTo(dp.x+4,dp.y-1); ctx.stroke();
+            ctx.globalAlpha=1;
+          }
+        } else if(th.propSet==='beach'){
+          if(variant<0.5){
+            ctx.fillStyle='#f2ead0'; ctx.strokeStyle='#c9a86a'; ctx.lineWidth=0.8;
+            ctx.beginPath(); ctx.arc(dp.x,dp.y-1,2.4*gscale,Math.PI,0); ctx.fill(); ctx.stroke();
+          } else {
+            ctx.fillStyle='#9a9aa0';
+            ctx.beginPath(); ctx.ellipse(dp.x,dp.y-1,2.8*gscale,2*gscale,0,0,Math.PI*2); ctx.fill();
+          }
+        }
       }
       ctx.restore();
 
@@ -1274,7 +1553,7 @@
     }
 
     // trackside decoration, sitting right on the ground — themed per level
-    for(var bx=camX-150;bx<camX+W+150;bx+=140){
+    for(var bx=snapStart(camX-150,140);bx<camX+W+150;bx+=140){
       var bseed=Math.abs(Math.sin(bx*0.041))%1;
       if(inJumpGap(bx,80)) continue;
       var bgy=groundYAt(bx);
