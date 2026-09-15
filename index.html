@@ -49,6 +49,9 @@
     position:absolute;top:56px;right:10px;z-index:4;
     display:flex;flex-direction:column;gap:6px;pointer-events:none;
   }
+  #comboHud{
+    position:absolute;top:56px;left:10px;z-index:4;pointer-events:none;
+  }
   .puPill{
     display:flex;align-items:center;gap:6px;
     background:rgba(12,14,18,0.7);border:1px solid rgba(255,255,255,0.12);
@@ -162,6 +165,7 @@
     <canvas id="c"></canvas>
     <div id="hint">Two pedals: hold RIGHT to ride, hold LEFT to reverse. Hold either in the air to tilt the bike!</div>
     <div id="powerupHud"></div>
+    <div id="comboHud"></div>
     <div id="controls">
       <div class="grp">
         <div class="pedal" id="reverse" aria-label="reverse">&#9664;<small>REVERSE</small></div>
@@ -215,6 +219,19 @@
       }
     });
     powerupHudEl.innerHTML=html;
+  }
+  var comboHudEl=document.getElementById('comboHud');
+  var COMBO_WINDOW_MS=2500;
+  function updateComboHud(){
+    var now=performance.now();
+    if(comboLevel<=0 || now-lastTrickTime>COMBO_WINDOW_MS){
+      comboHudEl.innerHTML='';
+      return;
+    }
+    var mult=Math.min(comboLevel,8);
+    var frac=Math.max(0,1-(now-lastTrickTime)/COMBO_WINDOW_MS);
+    comboHudEl.innerHTML='<div class="puPill" style="color:#ff6fae">COMBO \u00d7'+mult+
+      '<div class="puBar" style="width:'+(frac*100)+'%"></div></div>';
   }
   var overlay=document.getElementById('overlay'), overlayTitle=document.getElementById('overlayTitle'), overlaySub=document.getElementById('overlaySub');
   var startBtn=document.getElementById('startBtn');
@@ -352,13 +369,37 @@
     try{ localStorage.setItem('stuntBaronLeaderboard',JSON.stringify(leaderboard)); }catch(e){}
   }
 
-  function awardTrick(now,name,basePoints,x,y){
-    if(now-lastTrickTime>2400) comboLevel=0;
+  // ONE authoritative stunt-scoring path: takes the whole jumpResult from
+  // Phase 5.1's detection, combines every component that actually triggered
+  // (Big Air / flip or double flip, never both a single flip AND double for
+  // the same rotation / airtime bonus / perfect landing) into a single combo
+  // evaluation and a single combined popup — instead of separately awarding
+  // and combo-incrementing per component, which is what the old awardTrick
+  // call pattern did.
+  function scoreJumpResult(jumpResult,now,x,y){
+    var comps=[];
+    if(jumpResult.flips>=1.7){ comps.push({name:'DOUBLE FLIP',pts:350}); }
+    else if(jumpResult.flips>=0.8){ comps.push({name:(jumpResult.flipDirection==='back'?'BACKFLIP':'FRONTFLIP'),pts:150}); }
+    if(jumpResult.bigAir) comps.push({name:'BIG AIR',pts:100});
+    var atBonus=0;
+    if(jumpResult.airTime>=1000) atBonus=100;
+    else if(jumpResult.airTime>=600) atBonus=60;
+    else if(jumpResult.airTime>=300) atBonus=30;
+    if(atBonus>0) comps.push({name:'AIRTIME',pts:atBonus});
+    if(jumpResult.perfectLanding) comps.push({name:'PERFECT LANDING',pts:200});
+
+    if(comps.length===0) return; // nothing meaningful happened — combo/score untouched
+
+    if(now-lastTrickTime>COMBO_WINDOW_MS) comboLevel=0;
     var mult=Math.min(comboLevel+1,8);
-    var pts=basePoints*mult;
-    score+=pts; scoreStat.textContent=score;
+    var baseTotal=0; for(var ci=0;ci<comps.length;ci++) baseTotal+=comps[ci].pts;
+    var total=baseTotal*mult;
+    score+=total; scoreStat.textContent=score;
     comboLevel++; lastTrickTime=now;
-    var label=mult>1?(name+' \u00d7'+mult+'  +'+pts):(name+'  +'+pts);
+    updateComboHud();
+
+    var names=[]; for(var ni=0;ni<comps.length;ni++) names.push(comps[ni].name);
+    var label=names.join('\n')+'\n+'+total+(mult>1?'  \u00d7'+mult+' COMBO':'');
     spawnPopup(x,y,label,'#ff6fae');
     spawnAura(x,y+20);
     spawnConfetti(x,y);
@@ -420,6 +461,7 @@
     crashed=false; finished=false; maxDist=0; airCount=0; coinCount=0;
     distStat.textContent='0 m'; airStat.textContent='0'; coinStat.textContent='0';
     score=0; comboLevel=0; lastTrickTime=-99999; airCumRot=0; scoreStat.textContent='0';
+    updateComboHud();
     airStartX=0; airStartY=0; maxAirHeightPx=0;
     trailA=[]; trailB=[]; auras=[]; popups=[]; shake=0; dust=[]; sparkles=[]; confetti=[]; debris=[];
     groundContact.wA=false; groundContact.wB=false; airborne=false;
@@ -485,6 +527,7 @@
 
   function crash(){
     crashed=true;
+    comboLevel=0; updateComboHud();
     shake=18;
     stopEngineSound();
     playCrash();
@@ -866,8 +909,8 @@
         }
 
         // one consolidated result for this jump — detection (what happened)
-        // kept separate from scoring (awardTrick's point values), reusing the
-        // exact same thresholds/awards the existing system already used
+        // kept separate from scoring, which scoreJumpResult() handles below
+        // as a single combo-aware evaluation of the whole jump
         var flips=Math.abs(airCumRot)/(Math.PI*2);
         var landAngle=((bike.chassis.angle%(Math.PI*2))+Math.PI*3)%(Math.PI*2)-Math.PI;
         var jumpResult={
@@ -881,15 +924,7 @@
           perfectLanding:(airtime>300 && Math.abs(landAngle)<0.18 && landAngVel<0.045)
         };
 
-        var trickName=null, basePoints=0;
-        if(jumpResult.flips>=1.7){ trickName='DOUBLE FLIP'; basePoints=400; }
-        else if(jumpResult.flips>=0.8){ trickName=(jumpResult.flipDirection==='back'?'BACKFLIP':'FRONTFLIP'); basePoints=150; }
-        else if(jumpResult.bigAir){ trickName='BIG AIR'; basePoints=50; }
-        if(trickName) awardTrick(now,trickName,basePoints,bike.chassis.position.x,bike.chassis.position.y-70);
-
-        if(jumpResult.perfectLanding){
-          awardTrick(now,'PERFECT LANDING',80,bike.chassis.position.x,bike.chassis.position.y-88);
-        }
+        scoreJumpResult(jumpResult,now,bike.chassis.position.x,bike.chassis.position.y-70);
       }
       }
       airborne=nowAirborne;
@@ -931,7 +966,7 @@
         }
       }
       updatePowerupHud();
-
+      updateComboHud();
       trailA.push({x:bike.wA.position.x,y:bike.wA.position.y,life:0});
       trailB.push({x:bike.wB.position.x,y:bike.wB.position.y,life:0});
       if(trailA.length>16) trailA.shift();
@@ -1933,7 +1968,9 @@
       ctx.font='bold 15px -apple-system,BlinkMacSystemFont,sans-serif';
       ctx.textAlign='center';
       ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=3;
-      ctx.fillText(p.text,p.x,p.y-t*30);
+      var lines=String(p.text).split('\n');
+      var baseY=p.y-t*30-(lines.length-1)*9;
+      lines.forEach(function(line,li){ ctx.fillText(line,p.x,baseY+li*18); });
       ctx.restore();
     });
 
